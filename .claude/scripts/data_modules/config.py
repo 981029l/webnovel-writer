@@ -38,6 +38,40 @@ def _load_dotenv():
 
 _load_dotenv()
 
+# 尝试从全局 ai_config.json 加载配置 (与前端配置保持一致)
+def _load_ui_config():
+    try:
+        config_path = Path.home() / ".webnovel_writer" / "config" / "ai_config.json"
+        if config_path.exists():
+            import json
+            with open(config_path, "r", encoding="utf-8") as f:
+                ui_config = json.load(f)
+                
+                # 映射 Base URL (移除 /v1 后缀以适配处理逻辑)
+                base_url = ui_config.get("base_url", "")
+                api_key = ui_config.get("api_key", "")
+                
+                # 如果环境变量未设置，使用 UI 配置
+                if base_url and "EMBED_BASE_URL" not in os.environ:
+                    # 假设 Embedding 服务在同一 host 下
+                    os.environ["EMBED_BASE_URL"] = base_url
+                    os.environ["EMBED_API_TYPE"] = "openai"
+                
+                if api_key and "EMBED_API_KEY" not in os.environ:
+                    os.environ["EMBED_API_KEY"] = api_key
+                    
+                # Rerank 配置：默认使用 embedding 模式，不自动映射为 openai
+                if base_url and "RERANK_BASE_URL" not in os.environ:
+                    os.environ["RERANK_BASE_URL"] = base_url
+                
+                if api_key and "RERANK_API_KEY" not in os.environ:
+                    os.environ["RERANK_API_KEY"] = api_key
+                    
+    except Exception as e:
+        print(f"[Config] Failed to load UI config: {e}")
+
+_load_ui_config()
+
 
 @dataclass
 class DataModulesConfig:
@@ -84,7 +118,9 @@ class DataModulesConfig:
         return self.embed_base_url
 
     # ================= Rerank API 配置 =================
-    rerank_api_type: str = "openai"
+    # 默认使用 "embedding" 模式：复用 Embedding API 计算余弦相似度，无需独立 rerank 服务
+    # 可选 "openai" (Jina/Cohere) 或 "modal"
+    rerank_api_type: str = field(default_factory=lambda: os.getenv("RERANK_API_TYPE", "embedding"))
     rerank_base_url: str = field(default_factory=lambda: os.getenv("RERANK_BASE_URL", "https://api.jina.ai/v1"))
     rerank_model: str = field(default_factory=lambda: os.getenv("RERANK_MODEL", "jina-reranker-v3"))
     rerank_api_key: str = field(default_factory=lambda: os.getenv("RERANK_API_KEY", ""))

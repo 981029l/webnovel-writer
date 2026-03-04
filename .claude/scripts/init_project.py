@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -56,14 +57,26 @@ def _ensure_state_schema(state: Dict[str, Any]) -> Dict[str, Any]:
     - structured_relationships 已迁移到 index.db relationships 表
     - state.json 保持精简 (< 5KB)
     """
+    # v5.2: 健壮性处理 - 确保关键字段如果存在但为 None，自动修复为 dict
+    for key in ["project_info", "progress", "protagonist_state", "relationships"]:
+        if state.get(key) is None:
+            state[key] = {}
+
     state.setdefault("project_info", {})
     state.setdefault("progress", {})
     state.setdefault("protagonist_state", {})
     state.setdefault("relationships", {})  # update_state.py 需要此字段
     state.setdefault("disambiguation_warnings", [])
     state.setdefault("disambiguation_pending", [])
+    
+    if state.get("world_settings") is None: 
+        state["world_settings"] = {"power_system": [], "factions": [], "locations": []}
     state.setdefault("world_settings", {"power_system": [], "factions": [], "locations": []})
+
+    if state.get("plot_threads") is None:
+        state["plot_threads"] = {"active_threads": [], "foreshadowing": []}
     state.setdefault("plot_threads", {"active_threads": [], "foreshadowing": []})
+
     state.setdefault("review_checkpoints", [])
     state.setdefault(
         "strand_tracker",
@@ -94,6 +107,8 @@ def _ensure_state_schema(state: Dict[str, Any]) -> Dict[str, Any]:
     ps.setdefault("location", {"current": "", "last_chapter": 0})
     ps.setdefault("golden_finger", {"name": "", "level": 1, "cooldown": 0, "skills": []})
     ps.setdefault("attributes", {})
+
+    state["initialized"] = True  # v5.2: 只要运行此脚本，即视为进入已完成骨架初始化的状态
 
     return state
 
@@ -127,6 +142,66 @@ def _build_master_outline(target_chapters: int, *, chapters_per_volume: int = 50
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _safe_entity_filename(name: str) -> str:
+    """清理实体文件名，避免非法路径字符。"""
+    text = (name or "").strip()
+    text = re.sub(r"[\\/:*?\"<>|]", "", text)
+    return text
+
+
+def _build_protagonist_profile(name: str) -> str:
+    return "\n".join(
+        [
+            f"# {name}",
+            "",
+            "## 基本信息",
+            "- **身份**：主角",
+            "- **首次出场**：第1章",
+            "- **当前境界**：未知",
+            "- **当前状态**：存活",
+            "- **当前地点**：未知",
+            "- **最后更新章节**：第1章",
+            "",
+            "## 与主角关系",
+            "主角本人",
+            "",
+            "## 外貌描写",
+            "待补充",
+            "",
+            "## 性格特点",
+            "待补充",
+            "",
+            "## 关键事件时间线",
+            "- 第1章：项目初始化建档",
+            "",
+            "---",
+            "*档案创建于项目初始化*",
+            "",
+        ]
+    )
+
+
+def _build_active_roster(protagonist_name: str) -> str:
+    lines = [
+        "# 活跃角色表（初始化）",
+        "",
+        "## 活跃角色",
+    ]
+    if protagonist_name:
+        lines.append(f"- **{protagonist_name}**｜主角｜第1章登场")
+    else:
+        lines.append("（待补充）")
+    lines.extend(
+        [
+            "",
+            "## 已下线（仅保留记录）",
+            "（暂无）",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def init_project(
     project_dir: str,
     title: str,
@@ -156,6 +231,10 @@ def init_project(
         "设定集/角色库/主要角色",
         "设定集/角色库/次要角色",
         "设定集/角色库/反派角色",
+        "设定集/宝物库",
+        "设定集/功法库",
+        "设定集/势力库",
+        "设定集/地点库",
         "设定集/物品库",
         "设定集/其他设定",
         "大纲",
@@ -301,6 +380,19 @@ def init_project(
                 "",
             ]
         ),
+    )
+
+    # 同步初始化角色库，避免“主角卡”与“角色库”数据源分裂
+    protagonist_display_name = (protagonist_name or "").strip()
+    safe_protagonist_name = _safe_entity_filename(protagonist_display_name)
+    if safe_protagonist_name:
+        _write_text_if_missing(
+            project_path / "设定集" / "角色库" / "主要角色" / f"{safe_protagonist_name}.md",
+            _build_protagonist_profile(protagonist_display_name),
+        )
+    _write_text_if_missing(
+        project_path / "设定集" / "角色库" / "活跃角色.md",
+        _build_active_roster(protagonist_display_name),
     )
 
     _write_text_if_missing(

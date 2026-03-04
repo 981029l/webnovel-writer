@@ -1,0 +1,241 @@
+/* Copyright (c) 2026 左岚. All rights reserved. */
+/* src/assets/main.css - Global Styles & Design System */
+
+:root {
+    /* Color Palette — Warm Ink & Paper */
+    --primary: #8b7355;
+    --primary-light: #f0ebe3;
+    --primary-dark: #6b5840;
+    --secondary: #a08d74;
+    --cta: #10B981;
+    --text-primary: #2c2825;
+    --text-secondary: #5c5550;
+    --text-muted: #9c958a;
+    --bg-background: #f8f6f1;
+    --bg-card: #fdfcf9;
+    --bg-secondary: #f5f2eb;
+    --bg-hover: #f0ebe3;
+    --border: #e0dbd2;
+    --border-hover: #c9b99a;
+    --danger: #c0392b;
+
+    /* Layout */
+    --sidebar-width: 260px;
+    --sidebar-bg: #ffffff;
+    --sidebar-border: #e5e7eb;
+
+    /* Spacing & Radius */
+    --radius-sm: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --radius-xl: 0.75rem;
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+/* Reset & Base */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--text-primary);
+    background-color: var(--bg-background);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+
+#app {
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Utility Classes (Mocking Tailwind) */
+.size-3 {
+    width: 0.75rem;
+    height: 0.75rem;
+}
+
+.size-4 {
+    width: 1rem;
+    height: 1rem;
+}
+
+.size-5 {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+.size-6 {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+.size-8 {
+    width: 2rem;
+    height: 2rem;
+}
+
+.size-16 {
+    width: 4rem;
+    height: 4rem;
+}
+
+.mr-1 {
+    margin-right: 0.25rem;
+}
+
+.mr-2 {
+    margin-right: 0.5rem;
+}
+
+.mr-4 {
+    margin-right: 1rem;
+}
+
+.mb-2 {
+    margin-bottom: 0.5rem;
+}
+
+.mb-4 {
+    margin-bottom: 1rem;
+}
+
+.mb-6 {
+    margin-bottom: 1.5rem;
+}
+
+.mt-2 {
+    margin-top: 0.5rem;
+}
+
+.mt-4 {
+    margin-top: 1rem;
+}
+
+.mx-auto {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.text-muted {
+    color: var(--text-muted);
+}
+
+/* Buttons */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background-color: var(--primary);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: var(--primary-dark);
+}
+
+.btn-secondary {
+    background-color: white;
+    border-color: var(--border);
+    color: var(--text-secondary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.btn-ai {
+    background: linear-gradient(135deg, #a08d74 0%, #8b7355 100%);
+    color: white;
+    border: none;
+}
+
+.btn-ai:hover:not(:disabled) {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+.btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-secondary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.btn-danger {
+    background-color: var(--danger);
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #dc2626;
+}
+
+.spinner-sm {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: globalSpin 0.6s linear infinite;
+    display: inline-block;
+}
+
+@keyframes globalSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* Layout Helpers */
+.flex {
+    display: flex;
+}
+
+.flex-col {
+    flex-direction: column;
+}
+
+.items-center {
+    align-items: center;
+}
+
+.justify-center {
+    justify-content: center;
+}
+
+.justify-between {
+    justify-content: space-between;
+}
+
+.gap-2 {
+    gap: 0.5rem;
+}

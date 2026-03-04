@@ -149,6 +149,28 @@ pip install -r .claude/scripts/requirements.txt
 /webnovel-review 1-5
 ```
 
+### 6. Web 界面（可选）
+
+除了命令行方式，还可以使用可视化 Web 界面进行创作：
+
+```bash
+# 启动后端（端口 8080）
+cd backend
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8080
+
+# 启动前端（新终端，端口 5173）
+cd frontend
+npm install  # 首次运行
+npm run dev
+```
+
+打开浏览器访问 http://localhost:5173，即可使用图形界面进行：
+- 项目初始化和配置
+- 大纲编辑（树状图）
+- 章节创作（Markdown 编辑器）
+- 实体管理（角色、伏笔）
+- RAG 语义检索测试
+
 ---
 
 ## 命令详解
@@ -391,9 +413,9 @@ Step 6: Git 自动提交备份
 
 # Embedding 配置 (默认使用魔搭)
 EMBED_API_TYPE=openai          # openai 兼容接口
-EMBED_BASE_URL=https://api-inference.modelscope.cn/v1
-EMBED_MODEL=Qwen/Qwen3-Embedding-8B
-EMBED_API_KEY=your-modelscope-token
+EMBED_BASE_URL=https://api-inference.modelscope.cn/api-inference/v1/models/iic/nlp_corom_sentence-embedding_chinese-base
+EMBED_MODEL=iic/nlp_corom_sentence-embedding_chinese-base
+EMBED_API_KEY=ms-041068cc-89cd-401d-99b6-1a0d9eea31f3
 
 # Reranker 配置
 RERANK_API_TYPE=openai         # openai (兼容 Jina/Cohere)

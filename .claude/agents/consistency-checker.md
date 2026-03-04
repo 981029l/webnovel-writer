@@ -98,18 +98,20 @@ tools: Read, Grep
    → VIOLATION: Timeline arithmetic error
 ```
 
-### Step 3: Entity Consistency Check
+### Step 3: Entity Consistency Check (Nuclear Option)
 
-**For all new entities detected in chapters**:
-1. Check if they contradict existing settings
-2. Assess if their introduction is consistent with world-building
-3. Verify power levels are reasonable for the current arc
+**For all entities (Sects, Locations, Names, Items) detected**:
+1. **Side-by-Side Comparison**:
+   - Extract entity from Outline.
+   - Extract entity from Content.
+   - **MUST MATCH EXACTLY**. (e.g., "Luoyun Sect" != "Liuyun Sect").
 
 **Report inconsistent inventions**:
 ```
-⚠️ 发现设定冲突:
-- 第46章出现"紫霄宗"，与设定集中势力分布矛盾
-  → 建议: 确认是否为新势力或笔误
+❌ 设定冲突 (CRITICAL):
+- 大纲要求: "落云宗"
+- 正文写作: "流云宗"
+  → 判定: 严重错误，扣分！
 ```
 
 ### Step 4: Generate Report

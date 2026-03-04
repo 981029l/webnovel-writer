@@ -1,0 +1,8 @@
+# Copyright (c) 2026 左岚. All rights reserved.
+# Backend dependencies
+
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+aiofiles>=23.2.0

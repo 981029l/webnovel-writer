@@ -3,26 +3,23 @@
 """
 Data Modules - API 客户端 (v5.0 OpenAI 兼容接口)
 
-支持两种 API 类型：
-1. openai: OpenAI 兼容的 /v1/embeddings 和 /v1/rerank 接口
-   - 适用于: OpenAI, Jina, Cohere, vLLM, Ollama 等
+支持三种 Rerank 模式：
+1. openai: OpenAI 兼容的 /v1/rerank 接口 (Jina/Cohere)
 2. modal: Modal 自定义接口格式
-   - 适用于: 自部署的 Modal 服务
+3. embedding: 使用 Embedding API 计算余弦相似度作为 rerank（无需额外 rerank 服务）
 
 配置示例 (config.py):
     embed_api_type = "openai"
-    embed_base_url = "https://api.openai.com/v1"
-    embed_model = "text-embedding-3-small"
+    embed_base_url = "https://api-inference.modelscope.cn/v1"
+    embed_model = "Qwen/Qwen3-Embedding-8B"
     embed_api_key = "sk-xxx"
 
-    rerank_api_type = "openai"  # Jina/Cohere 也使用此类型
-    rerank_base_url = "https://api.jina.ai/v1"
-    rerank_model = "jina-reranker-v2-base-multilingual"
-    rerank_api_key = "jina_xxx"
+    rerank_api_type = "embedding"  # 使用 embedding 相似度替代专用 rerank API
 """
 
 import asyncio
 import aiohttp
+import math
 import time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
@@ -55,7 +52,7 @@ class EmbeddingAPIClient:
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             connector = aiohttp.TCPConnector(limit=200, limit_per_host=100)
-            self._session = aiohttp.ClientSession(connector=connector)
+            self._session = aiohttp.ClientSession(connector=connector, trust_env=False)
         return self._session
 
     async def close(self):
@@ -230,7 +227,10 @@ class RerankAPIClient:
     """
     通用 Rerank API 客户端
 
-    支持 OpenAI 兼容接口 (Jina/Cohere 格式) 和 Modal 自定义接口
+    支持三种模式：
+    1. openai: OpenAI 兼容接口 (Jina/Cohere 格式)
+    2. modal: Modal 自定义接口
+    3. embedding: 使用 Embedding API 计算余弦相似度（无需专用 rerank 服务）
     """
 
     def __init__(self, config=None):
@@ -239,16 +239,23 @@ class RerankAPIClient:
         self.stats = APIStats()
         self._warmed_up = False
         self._session: Optional[aiohttp.ClientSession] = None
+        # embedding 模式下复用 Embedding 客户端
+        if self.config.rerank_api_type == "embedding":
+            self._embed_client = EmbeddingAPIClient(self.config)
+        else:
+            self._embed_client = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             connector = aiohttp.TCPConnector(limit=200, limit_per_host=100)
-            self._session = aiohttp.ClientSession(connector=connector)
+            self._session = aiohttp.ClientSession(connector=connector, trust_env=False)
         return self._session
 
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()
+        if self._embed_client:
+            await self._embed_client.close()
 
     def _build_headers(self) -> Dict[str, str]:
         """构建请求头"""
@@ -299,6 +306,66 @@ class RerankAPIClient:
             # Modal 格式: {"results": [...]}
             return data.get("results", [])
 
+    @staticmethod
+    def _cosine_similarity(a: List[float], b: List[float]) -> float:
+        """计算两个向量的余弦相似度"""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    async def _rerank_via_embedding(
+        self,
+        query: str,
+        documents: List[str],
+        top_n: Optional[int] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """使用 Embedding 余弦相似度进行 rerank"""
+        if not self._embed_client:
+            print("[ERR] Rerank(embedding): embed_client not initialized")
+            return None
+
+        start = time.time()
+        try:
+            # 将 query 和所有 documents 一次性 embed
+            all_texts = [query] + documents
+            embeddings = await self._embed_client.embed(all_texts)
+
+            if not embeddings or len(embeddings) < 2:
+                print("[ERR] Rerank(embedding): embedding failed or returned too few results")
+                self.stats.errors += 1
+                return None
+
+            query_emb = embeddings[0]
+            doc_embs = embeddings[1:]
+
+            # 计算余弦相似度
+            scores = []
+            for i, doc_emb in enumerate(doc_embs):
+                if doc_emb is None:
+                    scores.append({"index": i, "relevance_score": 0.0})
+                else:
+                    sim = self._cosine_similarity(query_emb, doc_emb)
+                    scores.append({"index": i, "relevance_score": sim})
+
+            # 按分数降序排序
+            scores.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+            if top_n:
+                scores = scores[:top_n]
+
+            self.stats.total_calls += 1
+            self.stats.total_time += time.time() - start
+            self._warmed_up = True
+            return scores
+
+        except Exception as e:
+            self.stats.errors += 1
+            print(f"[ERR] Rerank(embedding): {e}")
+            return None
+
     async def rerank(
         self,
         query: str,
@@ -308,6 +375,10 @@ class RerankAPIClient:
         """调用 Rerank 服务（带重试机制）"""
         if not documents:
             return []
+
+        # embedding 模式：使用余弦相似度
+        if self.config.rerank_api_type == "embedding":
+            return await self._rerank_via_embedding(query, documents, top_n)
 
         timeout = self.config.cold_start_timeout if not self._warmed_up else self.config.normal_timeout
         max_retries = getattr(self.config, 'api_max_retries', 3)
@@ -374,8 +445,13 @@ class RerankAPIClient:
 
     async def warmup(self):
         """预热服务"""
-        await self.rerank("test", ["doc1", "doc2"])
-        self._warmed_up = True
+        if self.config.rerank_api_type == "embedding":
+            if self._embed_client:
+                await self._embed_client.warmup()
+                self._warmed_up = True
+        else:
+            await self.rerank("test", ["doc1", "doc2"])
+            self._warmed_up = True
 
 
 class ModalAPIClient:
