@@ -53,41 +53,48 @@ tools: Read, Grep
 
 ### Step 4: OOC Detection (三级判定)
 
-#### Level 1: Minor Deviation (轻微偏离)
-**Definition**: Character behaves slightly differently, but has plausible in-world justification.
+#### Level 1: Minor Deviation (轻微偏离) - 强制审查
+**Definition**: Character behaves slightly differently. **即使有合理解释，也必须标记并要求加强铺垫。**
 
 **Examples**:
 ```
-✓ Acceptable:
+⚠️ 需要加强铺垫:
 角色：林天（平时冷静）
 场景：敌人威胁要杀他家人
 行为：罕见地暴怒
-判定：✓ 触及底线，情绪变化合理
+判定：⚠️ 虽然触及底线合理，但需要前置3-5句内心挣扎描写
 
-✓ Acceptable:
+⚠️ 需要加强铺垫:
 角色：李雪（平时温柔）
 场景：主角生死关头
 行为：展现强势果断的一面
-判定：✓ 危机激发隐藏面，有前置铺垫
+判定：⚠️ 需要补充"她想起了什么"的具体触发回忆
 ```
 
-#### Level 2: Moderate OOC (中度失真)
-**Definition**: Character acts inconsistently without adequate setup or explanation.
+**强制要求**: 任何性格偏离都必须有**具体的心理过程描写**，不能只靠"合理性"通过。
+
+#### Level 2: Moderate OOC (中度失真) - 强制重写
+**Definition**: Character acts inconsistently without adequate setup. **必须重写，不允许通过。**
 
 **Examples**:
 ```
-⚠️ Warning:
+❌ 强制重写:
 角色：林天（三思而后行）
 场景：普通挑衅
 行为：突然冲动鲁莽
-判定：⚠️ 缺少动机，需补充原因（如压力积累/特殊影响）
+判定：❌ 必须重写 - 要么改变挑衅内容（触及底线），要么改变林天反应（冷静应对）
 
-⚠️ Warning:
+❌ 强制重写:
 角色：慕容雪（高傲冷漠）
 场景：对路人甲
 行为：突然温柔体贴
-判定：⚠️ 性格转变过快，需铺垫（如特殊原因/渐进变化）
+判定：❌ 必须重写 - 要么增加3-5章渐进铺垫，要么改为"表面冷漠实则关心"
 ```
+
+**强制动作**:
+1. 立即停止当前章节写作
+2. 要么修改触发场景，要么重写角色反应
+3. 不允许"后续章节补充解释"的拖延处理
 
 #### Level 3: Severe OOC (严重崩坏)
 **Definition**: Character acts completely opposite to established traits with no justification.

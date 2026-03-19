@@ -163,22 +163,41 @@ class StyleSampler:
         scenes: List[Dict]
     ) -> List[StyleSample]:
         """
-        从章节中提取风格样本候选
+        从章节中提取风格样本候选 - 多维度质量控制
 
-        只有高分章节 (review_score >= 80) 才提取样本
+        评分标准更严格：
+        - review_score >= 85 (提高门槛)
+        - 必须通过AI痕迹检测
+        - 必须通过对话真实性检测
         """
-        if review_score < 80:
+        if review_score < 85:  # 提高门槛
             return []
 
         candidates = []
 
         for scene in scenes:
+            # 预检测AI痕迹
+            ai_trace_score = self._detect_ai_traces(scene.get("content", ""))
+            if ai_trace_score > 30:  # AI痕迹过重，跳过
+                continue
+
+            # 预检测对话真实性（如果包含对话）
+            if self._has_dialogue(scene.get("content", "")):
+                dialogue_score = self._check_dialogue_reality(scene.get("content", ""))
+                if dialogue_score < 70:  # 对话不够真实，跳过
+                    continue
+
             scene_type = self._classify_scene_type(scene)
             scene_content = scene.get("content", "")
 
             # 跳过过短的场景
-            if len(scene_content) < 200:
+            if len(scene_content) < 300:  # 提高最小长度要求
                 continue
+
+            # 计算综合质量分数
+            quality_score = self._calculate_quality_score(
+                review_score, ai_trace_score, dialogue_score if self._has_dialogue(scene_content) else 90
+            )
 
             # 创建样本
             sample = StyleSample(
@@ -186,36 +205,132 @@ class StyleSampler:
                 chapter=chapter,
                 scene_type=scene_type,
                 content=scene_content[:2000],  # 限制长度
-                score=review_score / 100.0,
+                score=quality_score / 100.0,
                 tags=self._extract_tags(scene_content)
             )
             candidates.append(sample)
 
         return candidates
 
+    def _detect_ai_traces(self, content: str) -> float:
+        """检测AI痕迹，返回0-100分数，越高越像AI写的"""
+        ai_patterns = [
+            "眼中闪过.*情绪", "心中五味杂陈", "时间仿佛.*静止",
+            "空气中弥漫着", "波澜不惊", "古井无波",
+            "缓缓.*", "轻轻.*", "静静.*"
+        ]
+
+        trace_count = 0
+        for pattern in ai_patterns:
+            import re
+            if re.search(pattern, content):
+                trace_count += 1
+
+        # 简单计算：每个AI模式扣10分
+        return min(trace_count * 10, 100)
+
+    def _has_dialogue(self, content: str) -> bool:
+        """检测是否包含对话"""
+        dialogue_markers = ['"', '"', '"', '说道', '问道', '答道']
+        return any(marker in content for marker in dialogue_markers)
+
+    def _check_dialogue_reality(self, content: str) -> float:
+        """检测对话真实性，返回0-100分数"""
+        if not self._has_dialogue(content):
+            return 90  # 无对话默认高分
+
+        # 检测书面化程度
+        formal_words = ["因此", "然而", "显然", "毫无疑问", "事实上"]
+        formal_count = sum(1 for word in formal_words if word in content)
+
+        # 检测口语特征
+        oral_features = ["嗯", "啊", "哦", "呃", "那个", "就是", "算了"]
+        oral_count = sum(1 for feature in oral_features if feature in content)
+
+        # 简单评分：口语特征加分，书面化扣分
+        score = 70 + oral_count * 5 - formal_count * 10
+        return max(0, min(100, score))
+
+    def _calculate_quality_score(self, review_score: float, ai_trace_score: float, dialogue_score: float) -> float:
+        """计算综合质量分数"""
+        # 加权平均：审查分数50%，AI痕迹30%，对话真实性20%
+        return (review_score * 0.5 +
+                (100 - ai_trace_score) * 0.3 +
+                dialogue_score * 0.2)
+
     def _classify_scene_type(self, scene: Dict) -> str:
-        """分类场景类型"""
+        """分类场景类型 - 基于语义和情感层次，而非机械关键词"""
         summary = scene.get("summary", "").lower()
         content = scene.get("content", "").lower()
-
-        # 简单关键词分类
-        battle_keywords = ["战斗", "攻击", "出手", "拳", "剑", "杀", "打", "斗"]
-        dialogue_keywords = ["说道", "问道", "笑道", "冷声", "对话"]
-        emotion_keywords = ["心中", "感觉", "情", "泪", "痛", "喜"]
-        tension_keywords = ["危险", "紧张", "恐惧", "压力"]
-
         text = summary + content
 
-        if any(kw in text for kw in battle_keywords):
-            return SceneType.BATTLE.value
-        elif any(kw in text for kw in tension_keywords):
-            return SceneType.TENSION.value
-        elif any(kw in text for kw in dialogue_keywords):
-            return SceneType.DIALOGUE.value
-        elif any(kw in text for kw in emotion_keywords):
-            return SceneType.EMOTION.value
-        else:
-            return SceneType.DESCRIPTION.value
+        # 多维度权重评分，而非简单关键词匹配
+        scores = {
+            SceneType.BATTLE.value: 0,
+            SceneType.DIALOGUE.value: 0,
+            SceneType.EMOTION.value: 0,
+            SceneType.TENSION.value: 0,
+            SceneType.DESCRIPTION.value: 0
+        }
+
+        # 战斗场景：动作密度 + 冲突强度
+        battle_patterns = [
+            (["战斗", "攻击", "出手"], 3),  # 直接动作
+            (["血", "伤", "痛", "死"], 2),  # 后果
+            (["快", "猛", "狠", "准"], 1),  # 动作特征
+            (["拳", "剑", "刀", "枪"], 1)   # 武器
+        ]
+        for keywords, weight in battle_patterns:
+            if any(kw in text for kw in keywords):
+                scores[SceneType.BATTLE.value] += weight
+
+        # 对话场景：交流密度 + 语言特征
+        dialogue_patterns = [
+            (["说", "道", "问", "答"], 3),
+            (["声音", "语气", "口吻"], 2),
+            (["沉默", "停顿", "犹豫"], 1),
+            (["\"", """, """], 2)  # 引号密度
+        ]
+        for keywords, weight in dialogue_patterns:
+            if any(kw in text for kw in keywords):
+                scores[SceneType.DIALOGUE.value] += weight
+
+        # 情感场景：内心活动 + 情绪表现
+        emotion_patterns = [
+            (["心", "想", "觉得", "感觉"], 3),
+            (["泪", "笑", "哭", "怒"], 2),
+            (["温暖", "冰冷", "颤抖"], 1),
+            (["回忆", "想起", "忘记"], 1)
+        ]
+        for keywords, weight in emotion_patterns:
+            if any(kw in text for kw in keywords):
+                scores[SceneType.EMOTION.value] += weight
+
+        # 紧张场景：压迫感 + 不确定性
+        tension_patterns = [
+            (["危险", "恐惧", "害怕"], 3),
+            (["紧张", "焦虑", "不安"], 2),
+            (["黑暗", "阴影", "寂静"], 1),
+            (["突然", "忽然", "猛地"], 1)
+        ]
+        for keywords, weight in tension_patterns:
+            if any(kw in text for kw in keywords):
+                scores[SceneType.TENSION.value] += weight
+
+        # 描写场景：环境细节 + 感官体验
+        description_patterns = [
+            (["看到", "听到", "闻到"], 2),
+            (["风", "雨", "阳光", "月亮"], 1),
+            (["房间", "街道", "山", "水"], 1),
+            (["颜色", "声音", "味道"], 1)
+        ]
+        for keywords, weight in description_patterns:
+            if any(kw in text for kw in keywords):
+                scores[SceneType.DESCRIPTION.value] += weight
+
+        # 返回得分最高的类型，如果都是0则默认为描写
+        max_type = max(scores.items(), key=lambda x: x[1])
+        return max_type[0] if max_type[1] > 0 else SceneType.DESCRIPTION.value
 
     def _extract_tags(self, content: str) -> List[str]:
         """提取内容标签"""

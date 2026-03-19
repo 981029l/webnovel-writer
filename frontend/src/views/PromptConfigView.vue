@@ -1,8 +1,10 @@
 <!-- Copyright (c) 2026 左岚. All rights reserved. -->
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { projectsApi } from '../api'
 import { useProjectStore } from '../stores/project'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 
 const projectStore = useProjectStore()
 
@@ -12,6 +14,10 @@ const resetting = ref(false)
 const message = ref('')
 const promptConfig = ref({ genre: '', substyle: '', prompts: [] })
 const draftMap = ref({})
+const showSaveDialog = ref(false)
+const forceLeave = ref(false)
+const showLeaveDialog = ref(false)
+let pendingLeaveResolve = null
 
 function showMessage(text, duration = 3000) {
   message.value = text
@@ -67,12 +73,38 @@ const promptGroups = computed(() => {
   return Array.from(groups.entries()).map(([name, prompts]) => ({ name, prompts }))
 })
 
-async function saveAll() {
+// 3a. 变量缺失校验
+function getMissingVariables(item) {
+  const draft = draftMap.value[item.id] || ''
+  if (!item.variables?.length || !draft) return []
+  return item.variables.filter(v => !draft.includes(`{${v}}`))
+}
+
+// 保存确认弹窗需要的汇总信息
+const saveDialogSummary = computed(() => {
+  const dirtyItems = promptConfig.value.prompts.filter(item => isDirty(item.id))
+  return dirtyItems.map(item => ({
+    id: item.id,
+    name: item.name,
+    missing: getMissingVariables(item),
+  }))
+})
+
+const hasMissingVarsInDirty = computed(() => {
+  return saveDialogSummary.value.some(s => s.missing.length > 0)
+})
+
+// 3b. 保存确认弹窗
+function requestSave() {
   if (!dirtyPromptIds.value.length) {
     showMessage('当前没有未保存的改动')
     return
   }
+  showSaveDialog.value = true
+}
 
+async function confirmSave() {
+  showSaveDialog.value = false
   saving.value = true
   try {
     await projectsApi.updatePromptConfig({
@@ -124,11 +156,47 @@ async function resetAll() {
   }
 }
 
+// 3c. 离开页面警告
+function onBeforeUnload(e) {
+  if (dirtyPromptIds.value.length) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
+
+onBeforeRouteLeave(() => {
+  if (forceLeave.value || !dirtyPromptIds.value.length) return true
+  showLeaveDialog.value = true
+  return new Promise(resolve => { pendingLeaveResolve = resolve })
+})
+
+function confirmLeave() {
+  showLeaveDialog.value = false
+  forceLeave.value = true
+  if (pendingLeaveResolve) {
+    pendingLeaveResolve(true)
+    pendingLeaveResolve = null
+  }
+}
+
+function cancelLeave() {
+  showLeaveDialog.value = false
+  if (pendingLeaveResolve) {
+    pendingLeaveResolve(false)
+    pendingLeaveResolve = null
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('beforeunload', onBeforeUnload)
   if (!projectStore.title) {
     await projectStore.fetchStatus()
   }
   await loadPromptConfig()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
 })
 </script>
 
@@ -158,7 +226,7 @@ onMounted(async () => {
           <button class="btn ghost" @click="resetAll" :disabled="resetting || loading">
             {{ resetting ? '恢复中...' : '全部恢复默认' }}
           </button>
-          <button class="btn solid" @click="saveAll" :disabled="saving || !dirtyPromptIds.length">
+          <button class="btn solid" @click="requestSave" :disabled="saving || !dirtyPromptIds.length">
             {{ saving ? '保存中...' : '保存全部改动' }}
           </button>
         </div>
@@ -213,8 +281,11 @@ onMounted(async () => {
                 <div v-if="item.variables?.length" class="slot-meta-row">
                   <span class="slot-label">变量</span>
                   <div class="chip-row">
-                    <span v-for="variable in item.variables" :key="variable" class="chip">{{ variable }}</span>
+                    <span v-for="variable in item.variables" :key="variable" class="chip" :class="{ 'chip-missing': !(draftMap[item.id] || '').includes(`{${variable}}`) }">{{ variable }}</span>
                   </div>
+                </div>
+                <div v-if="getMissingVariables(item).length" class="var-warning">
+                  缺失变量：{{ getMissingVariables(item).join('、') }}
                 </div>
               </div>
 
@@ -235,6 +306,41 @@ onMounted(async () => {
         </section>
       </template>
     </div>
+
+    <!-- 保存确认弹窗 -->
+    <ConfirmDialog
+      :is-open="showSaveDialog"
+      title="确认保存"
+      :confirm-text="hasMissingVarsInDirty ? '仍然保存' : '确认保存'"
+      :type="hasMissingVarsInDirty ? 'warning' : 'primary'"
+      :loading="saving"
+      @confirm="confirmSave"
+      @cancel="showSaveDialog = false"
+    >
+      <p style="margin: 0 0 0.75rem;">即将保存以下模板的改动：</p>
+      <ul style="margin: 0; padding-left: 1.2rem; line-height: 1.8;">
+        <li v-for="s in saveDialogSummary" :key="s.id">
+          <strong>{{ s.name }}</strong>
+          <span v-if="s.missing.length" style="color: #b45309; font-size: 0.88rem;">
+            &nbsp;— 缺失变量：{{ s.missing.join('、') }}
+          </span>
+        </li>
+      </ul>
+      <p v-if="hasMissingVarsInDirty" style="margin: 0.75rem 0 0; color: #b45309; font-size: 0.88rem;">
+        部分模板存在缺失变量，运行时对应位置将不会被替换，可能导致输出异常。
+      </p>
+    </ConfirmDialog>
+
+    <!-- 离开页面确认弹窗 -->
+    <ConfirmDialog
+      :is-open="showLeaveDialog"
+      title="未保存的改动"
+      message="当前有未保存的提示词改动，离开后将丢失这些更改。确定要离开吗？"
+      confirm-text="离开"
+      type="warning"
+      @confirm="confirmLeave"
+      @cancel="cancelLeave"
+    />
 
     <div v-if="message" class="toast-message">{{ message }}</div>
   </div>
@@ -514,6 +620,23 @@ onMounted(async () => {
   border-radius: 999px;
   background: #f6efe5;
   color: #7a5f43;
+}
+
+.chip-missing {
+  background: #fef3c7;
+  color: #92400e;
+  text-decoration: line-through;
+}
+
+.var-warning {
+  margin-top: 0.35rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 10px;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 .prompt-editor {

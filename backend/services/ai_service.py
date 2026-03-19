@@ -11,9 +11,9 @@ from pathlib import Path
 from services.projects_manager import GLOBAL_CONFIG_DIR
 
 # 默认 AI API 配置
-DEFAULT_AI_BASE_URL = "http://jiushi.online/"
-DEFAULT_AI_API_KEY = "your-api-key-3"
-DEFAULT_AI_MODEL = "gpt-5.2"
+DEFAULT_AI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_AI_API_KEY = "your-openai-api-key-here"
+DEFAULT_AI_MODEL = "gpt-4"
 
 
 class AIService:

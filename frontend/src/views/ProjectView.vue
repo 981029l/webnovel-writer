@@ -35,9 +35,8 @@ const aiModels = ref([])
 const aiModelsLoading = ref(false)
 const showAiConfig = ref(false) // Default collapsed
 const apiBaseUrls = [
-  'http://jiushi.online', 'http://localhost:8000', 'http://127.0.0.1:8317', 'http://localhost:8317', 'https://cifang.xyz',
   'https://api.openai.com', 'https://api.deepseek.com', 'https://api.moonshot.cn', 'https://api-inference.modelscope.cn/compatible-mode/v1',
-  'https://api.x.ai/v1', 'https://generativelanguage.googleapis.com/v1beta/openai'
+  'https://api.x.ai/v1', 'https://generativelanguage.googleapis.com/v1beta/openai', 'http://localhost:8000', 'http://127.0.0.1:8317', 'http://localhost:8317'
 ]
 
 // Title Editing State

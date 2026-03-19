@@ -1158,15 +1158,38 @@ class SkillExecutor:
         )
         chapter_outline_for_prompt = self._truncate_text(chapter_outline, 1800, keep_tail=False)
 
-        return f"""你是一位享誉全球的文学大师和资深网文主编。你的任务是**深度润色**第{chapter_id}章，使其脱胎换骨。
+        # 主路径：从 slot 系统加载模板
+        polish_template = self._load_project_prompt("polish")
+        if polish_template:
+            return self._format_prompt_text(
+                polish_template,
+                chapter_id=str(chapter_id),
+                genre=genre,
+                substyle=substyle,
+                genre_writer_prompt=genre_writer_prompt or "",
+                substyle_writer_prompt=substyle_writer_prompt or "",
+                genre_guard=genre_guard or "",
+                positive_style_instruction=positive_style_instruction or "",
+                substyle_instruction=substyle_instruction or "",
+                chapter_outline=chapter_outline_for_prompt or "（无）",
+                substyle_examples=substyle_examples_for_prompt or "（无）",
+                genre_examples=genre_examples_for_prompt or "（无）",
+                suggestions=suggestions_for_prompt.strip() if suggestions_for_prompt.strip() else "（无特定意见，请按【核心指令】进行商业阅读效率提升）",
+                polish_guide=polish_guide or "保持原文风格，优化文笔，修正错别字。",
+                typesetting=typesetting or "段落清晰，标点规范。",
+                content=content_for_prompt,
+            )
+
+        # Fallback：原始硬编码
+        return f"""你是番茄小说/起点读书 Top100 数据团队的商业网文润色编辑。你的任务是**深度润色**第{chapter_id}章，目标是最大化读者留存率和完读率。
 
 【核心指令：必须重写！】
 即使【修改意见】为空，你也**必须**对原文进行全方位的提升！绝不允许原封不动地返回！
-请从以下维度进行升华：
-1. **画面感**：将平铺直叙转化为极具画面感的镜头语言。
-2. **情绪张力**：强化冲突和人物内心的波澜，消灭平淡。
-3. **文采修辞**：优化遣词造句，去除口语化和流水账，使用更精准、更具文学性的表达。
-4. **节奏掌控**：长短句结合，调整叙事节奏，使其更符合网文阅读体验。
+请从以下维度进行优化：
+1. **阅读速度**：削除一切减速句（冗余心理、重复描写、无效过渡），确保每段都在推进信息或情绪，读者不会停下来重读。
+2. **爽点密度**：每 800 字至少安排一个满足感落点（获得、反转、压制、揭秘、升级），不允许出现连续 800 字以上的"空转区"。
+3. **钩子布局**：段末埋微悬念（一句未完的话、一个反常细节、一个即将揭晓的信息），章末设强断点（重大转折、新威胁出现、关键抉择前夕）。
+4. **节奏节拍**：动作/对话/内心三拍交替，避免单一叙述模式连续超过 3 段；对话要短促有力，动作要具体可视化。
 
 【题材锁定（最高优先级）】
 当前题材：{genre}
@@ -1188,7 +1211,7 @@ class SkillExecutor:
 要求：只学习表达节奏与语气，不要照抄句子。
 
 【修改意见（用户指定）】
-{suggestions_for_prompt if suggestions_for_prompt.strip() else "（无特定意见，请按【核心指令】进行全面文学性提升）"}
+{suggestions_for_prompt if suggestions_for_prompt.strip() else "（无特定意见，请按【核心指令】进行商业阅读效率提升）"}
 
 【润色指南】
 {polish_guide if polish_guide else "保持原文风格，优化文笔，修正错别字。"}
@@ -4429,6 +4452,21 @@ class SkillExecutor:
         safe_name = self._safe_text(protagonist_name).strip() or "主角"
         safe_desc = self._safe_text(protagonist_desc).strip()
         safe_desc = safe_desc or "（以设定和大纲为准）"
+
+        # 主路径：从 slot 系统加载模板
+        template = self._load_project_prompt("chapter_hard_constraints")
+        if template:
+            return self._format_prompt_text(
+                template,
+                core_constraints=safe_constraints,
+                worldview=safe_worldview,
+                protagonist_name=safe_name,
+                protagonist_desc=safe_desc,
+                word_count=str(word_count),
+                word_count_max=str(word_count + 600),
+            )
+
+        # Fallback：原始硬编码
         return f"""你是一位专业的网文作者。
 
 【章节硬约束（非题材模板）】
@@ -4991,6 +5029,15 @@ class SkillExecutor:
             prompt_layers.append(base_writer_prompt)
         if independent_stage_prompt:
             prompt_layers.append(independent_stage_prompt)
+
+        # 注入题材风格锚定（genre_guard + positive_style + substyle_instruction）
+        genre_guard = self._build_genre_guard_instruction(genre, stage="章节写作")
+        positive_style_instruction = self._build_genre_positive_style_instruction(genre, stage="章节写作")
+        substyle_instruction = self._build_substyle_instruction(genre, substyle, stage="章节写作")
+        style_anchor_parts = [p for p in [genre_guard, positive_style_instruction, substyle_instruction] if p]
+        if style_anchor_parts:
+            prompt_layers.append("\n".join(style_anchor_parts))
+
         prompt_layers.append(hard_constraints_prompt)
         system_prompt = "\n\n".join(part for part in prompt_layers if part)
 
@@ -5064,36 +5111,66 @@ class SkillExecutor:
         chapter_keywords = self._truncate_text(chapter_outline_for_prompt, 120, keep_tail=False)
         next_chapter_keywords = self._truncate_text(next_chapter_outline_for_prompt, 120, keep_tail=False)
 
-        context = f"""## 待创作：第 {chapter} 章大纲（必须严格执行！）
+        # 构建 user prompt 里的风格锚定摘要
+        genre_style_anchor_parts = []
+        if genre_guard:
+            genre_style_anchor_parts.append(genre_guard)
+        if positive_style_instruction:
+            genre_style_anchor_parts.append(positive_style_instruction)
+        genre_style_anchor_text = "\n".join(genre_style_anchor_parts) if genre_style_anchor_parts else f"当前题材：{genre}，请严格遵守题材风格要求。"
+
+        # 主路径：从 slot 系统加载写作用户提示词模板
+        writing_user_template = self._load_project_prompt("writing_user_prompt")
+        if writing_user_template:
+            context = self._format_prompt_text(
+                writing_user_template,
+                chapter=str(chapter),
+                next_chapter=str(chapter + 1),
+                chapter_outline=chapter_outline_for_prompt or "（无大纲）",
+                recent_context=recent_context or "",
+                active_roster=active_roster_for_prompt,
+                character_details=character_details_for_prompt,
+                realtime_status=realtime_status_for_prompt if realtime_status_for_prompt else "（无状态追踪）",
+                entity_libraries=entity_libraries_for_prompt if entity_libraries_for_prompt else "（设定库为空）",
+                next_chapter_outline=next_chapter_outline_for_prompt if next_chapter_outline_for_prompt else "（无下一章大纲）",
+                chapter_keywords=chapter_keywords if chapter_keywords else "无",
+                next_chapter_keywords=next_chapter_keywords if next_chapter_keywords else "无",
+                continuity_summary=continuity_summary_for_prompt if continuity_summary_for_prompt else "（无连续性摘要）",
+                previous_ending=previous_ending_for_prompt if previous_ending_for_prompt else "（这是第一章，无需衔接）",
+                genre_style_anchor=genre_style_anchor_text,
+            )
+        else:
+            # Fallback：原始硬编码
+            context = f"""## 待创作：第 {chapter} 章大纲（必须严格执行！）
 {chapter_outline_for_prompt}
 
 {recent_context}
-## 📋 活跃角色表（必须使用正确名字！）
+## 活跃角色表（必须使用正确名字！）
 以下是当前故事中的活跃角色，写作时**必须使用正确的名字**，不要编造新角色替代现有角色：
 --------------------------------------------------
 {active_roster_for_prompt}
 --------------------------------------------------
 
-## ⚠️ 角色身份档案（最高优先级 - 必须使用正确的门派/势力！）
+## 角色身份档案（最高优先级 - 必须使用正确的门派/势力！）
 以下是角色的**真实身份和所属门派**，写作时角色的自称、介绍必须与档案一致！
 例如：某角色档案是"落云宗刑堂长老"，台词里就必须说"落云宗"，绝对不能说成"天火门"等其他门派！
 --------------------------------------------------
 {character_details_for_prompt}
 --------------------------------------------------
 
-## 📊 实时状态数值（严格遵守！数字必须一致！）
+## 实时状态数值（严格遵守！数字必须一致！）
 以下是当前故事中的关键数值，写作时**必须参考这些数字**，不能随意编造：
 --------------------------------------------------
 {realtime_status_for_prompt if realtime_status_for_prompt else "（无状态追踪）"}
 --------------------------------------------------
 
-## 📚 设定库标准名（必须优先复用）
+## 设定库标准名（必须优先复用）
 以下是已有实体标准名称。正文出现功法/宝物/势力/地点时，优先使用以下名称，不要凭空改名或创造近义别称：
 --------------------------------------------------
 {entity_libraries_for_prompt if entity_libraries_for_prompt else "（设定库为空）"}
 --------------------------------------------------
 
-## 🚨 剧情边界红线（最高优先级 - 违反即失败！）
+## 剧情边界红线（最高优先级 - 违反即失败！）
 请仔细对比【本章大纲】和【下一章大纲】，理解剧情的**时间线分配**：
 
 【下一章大纲预览】
@@ -5105,44 +5182,44 @@ class SkillExecutor:
 1. **关键词归属判定**：如果下一章出现"兵临城下"、"出征"、"交战"、"决战"等词，说明**战斗开始是下一章的内容**！
    - 本章只能写到：敌军逼近、战前准备、气氛紧张、双方对峙
    - 本章**绝对禁止**：城门打开、出城迎战、刀剑相向、杀敌、有人死亡
-   
+
 2. **冲突解决归属判定**：如果下一章标题包含"击败"、"歼灭"、"胜利"，说明**战斗胜利是下一章内容**！
    - 本章只能写到：战斗胶着、危机四伏、悬念积累
    - 本章**绝对禁止**：敌人被杀光、敌首被斩、战斗结束
-   
+
 3. **具体到你现在的任务**：
    - 本章（第{chapter}章）大纲关键词：{chapter_keywords if chapter_keywords else "无"}...
    - 下一章（第{chapter+1}章）大纲关键词：{next_chapter_keywords if next_chapter_keywords else "无"}...
    - **你必须在本章结尾处停在一个"即将发生"的状态，把下一章的核心内容留给下一章！**
 
 **错误示例（违反边界的写法）**：
-- ❌ 本章写"敌军冲锋，被我方死士全歼" → 下一章没东西可写了！
-- ❌ 本章写"城门打开，大军杀出" → 这是下一章"出征"的内容！
-- ❌ 本章写"战斗结束，敌首授首" → 你把下一章的高潮用完了！
+- 本章写"敌军冲锋，被我方死士全歼" → 下一章没东西可写了！
+- 本章写"城门打开，大军杀出" → 这是下一章"出征"的内容！
+- 本章写"战斗结束，敌首授首" → 你把下一章的高潮用完了！
 
 **正确示例（留有悬念的写法）**：
-- ✓ 本章结尾："远处地平线上，五千大军的火把连成一片，如同燃烧的星河……" → 悬念！下一章写战斗
-- ✓ 本章结尾："顾承厄冷笑一声，缓缓拔刀：'来得正好。'" → 悬念！下一章写出征
-- ✓ 本章结尾："城墙上，守卫们眼睁睁看着黑压压的大军逼近，却发现城门正在缓缓打开……" → 悬念！
+- 本章结尾："远处地平线上，五千大军的火把连成一片，如同燃烧的星河……" → 悬念！下一章写战斗
+- 本章结尾："顾承厄冷笑一声，缓缓拔刀：'来得正好。'" → 悬念！下一章写出征
+- 本章结尾："城墙上，守卫们眼睁睁看着黑压压的大军逼近，却发现城门正在缓缓打开……" → 悬念！
 
-## ⚠️ 上一章遗留状态（必须严格遵守！违反即失败！）
+## 上一章遗留状态（必须严格遵守！违反即失败！）
 以下是上一章的关键细节，写作时**必须考虑每一条**，不能假装没发生：
 --------------------------------------------------
 {continuity_summary_for_prompt if continuity_summary_for_prompt else "（无连续性摘要）"}
 --------------------------------------------------
-⛔ **强制要求**：如果上一章有角色处于受伤/昏迷/在场等状态，本章**必须用至少1-2句话交代他们的去向或处理方式**，然后再推进新剧情！
+**强制要求**：如果上一章有角色处于受伤/昏迷/在场等状态，本章**必须用至少1-2句话交代他们的去向或处理方式**，然后再推进新剧情！
 不能当这些人不存在！即使大纲没提到他们，你也必须合理交代（例如：主角离开时瞥了一眼、有人来搬走了伤员、角色被锁在房间里等）。
 忽视上一章遗留的角色/场景会导致严重的逻辑漏洞！
 
 ## 上一章结尾（仅供衔接定位，严禁复述！）
 以下是上一章最后几段原文。你的任务是从**这段文字之后的下一个瞬间**开始写，而不是重新描写这段文字里已经发生的事情。
 它只用于确认事件顺序、角色位置和动作衔接，**不得继承其中的气氛措辞、句法习惯或压抑镜头语言**。
-⛔ 禁止用不同的措辞重新演绎下面这些内容（换个说法重写也算复述）！
+禁止用不同的措辞重新演绎下面这些内容（换个说法重写也算复述）！
 {previous_ending_for_prompt if previous_ending_for_prompt else "（这是第一章，无需衔接）"}
 
 请开始创作第 {chapter} 章正文。
 **重要指示（必须遵守！）**：
-1. ⛔ **字数红线**：全文 **3200-3800字**，**严禁超过 4000 字**！剧情点多就精炼写，宁可精炼也不要注水超标！
+1. **字数红线**：全文 **3200-3800字**，**严禁超过 4000 字**！剧情点多就精炼写，宁可精炼也不要注水超标！
 2. **剧情因果连贯**：仔细阅读上一章结尾！如果上一章是"战前准备"，本章必须写"战斗过程"，不能直接跳到"战后总结"！
 3. **角色状态一致**：上一章角色如果已经醒了，本章不能又写"一直昏迷不醒"！检查每个角色的状态（清醒/昏迷、位置等），严禁前后矛盾！
 4. **严禁时间跳跃词汇**：绝对不能写"几日后"、"半月后"等！直接写当前正在发生的场景！

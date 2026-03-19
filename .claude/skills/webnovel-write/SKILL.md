@@ -14,8 +14,8 @@ allowed-tools: Read Write Edit Grep Bash Task
 章节创作进度 (v5.1)：
 - [ ] Step 1: Context Agent 搜集上下文
 - [ ] Step 2: 生成章节内容 (纯正文，3000-5000字)
-- [ ] Step 3: 审查 (5个Agent并行，输出汇总表格)
-- [ ] Step 4: 润色 (加载指南 + AI检测 + 输出检查清单)
+- [ ] Step 3: 审查 (7个Agent并行，输出汇总表格)
+- [ ] Step 4: 润色 (加载指南 + 强制AI痕迹检测 + 对话真实性强制检查)
 - [ ] Step 5: Data Agent 处理数据链
 - [ ] Step 6: Git 备份
 ```
@@ -88,12 +88,19 @@ cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/core-constraints.md"
 | 复杂场景 | 新地点/大场面描写 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/scene-description.md"` |
 | 欲念描写 | 大纲含暧昧/亲密/情欲场景 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/desire-description.md"` |
 
-**可选加载题材风格参考**（用户指定时加载）:
+**强制加载题材风格 prompt**（根据 state.json 中的 genre 字段自动选择）:
 ```bash
-# 如需特定题材的写作风格参考，可按需加载 genres 目录下的对应文件
-# 示例: cat "${CLAUDE_PLUGIN_ROOT}/genres/修仙/修仙-writing-style.md"
-# 可用题材: 修仙、系统流、都市异能、狗血言情、知乎短篇、古言、现实题材、规则怪谈等
+# ⚠️ 必须加载！题材风格 prompt 是防止氛围跑偏的核心锚定
+# 从 state.json 读取 genre 字段，加载对应题材的 writer.md
+cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/{genre}/writer.md"
+
+# 如果有子风格(substyle)，同时加载子风格 prompt
+# cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/{genre}/substyles/{substyle}.md"
 ```
+
+**可用题材**: xuanhuan(玄幻)、dog-blood-romance(狗血言情)、period-drama(古言)、realistic(都市现实)、zhihu-short(知乎短篇)、rules-mystery(规则怪谈)、dark(黑暗题材)
+
+⚠️ **如果未加载题材风格 prompt，写作步骤视为无效。** 题材 prompt 包含该题材的氛围基调、对话风格、禁词表等关键约束，缺失会导致风格跑偏。
 
 **输出格式**:
 - Markdown 文件: `正文/第{NNNN}章.md`
@@ -104,11 +111,11 @@ cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/core-constraints.md"
 
 ## Step 3: 审查
 
-⚠️ **强制要求**: 必须在**同一条消息**中并行调用全部 5 个 Agent。缺少任何一个视为步骤未完成，**禁止进入 Step 4**。
+⚠️ **强制要求**: 必须在**同一条消息**中并行调用全部 7 个 Agent。缺少任何一个视为步骤未完成，**禁止进入 Step 4**。
 
 **执行命令（不可修改）**:
 
-在一条消息中发送 5 个 Task 工具调用，每个调用需传入以下公共参数：
+在一条消息中发送 7 个 Task 工具调用，每个调用需传入以下公共参数：
 - project_root: {PROJECT_ROOT}
 - storage_path: .webnovel/
 - state_file: .webnovel/state.json
@@ -119,10 +126,12 @@ cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/core-constraints.md"
 | 1 | `high-point-checker` | ✅ | 爽点密度检查 |
 | 2 | `consistency-checker` | ✅ | 设定一致性检查 |
 | 3 | `pacing-checker` | ✅ | Strand 节奏检查 |
-| 4 | `ooc-checker` | ✅ | 人物 OOC 检查 |
+| 4 | `ooc-checker` | ✅ | 人物 OOC 检查（强化版） |
 | 5 | `continuity-checker` | ✅ | 连贯性检查 |
+| 6 | `anti-ai-detector` | ✅ | AI痕迹检测 |
+| 7 | `dialogue-reality-enforcer` | ✅ | 对话真实性强制检查 |
 
-**验证**: 收到全部 5 份报告后，**必须输出以下汇总表格**：
+**验证**: 收到全部 7 份报告后，**必须输出以下汇总表格**：
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -135,6 +144,8 @@ cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/core-constraints.md"
 │ pacing-checker      │ PASS/FAIL │ {N}           │
 │ ooc-checker         │ PASS/FAIL │ {N}           │
 │ continuity-checker  │ PASS/FAIL │ {N}           │
+│ anti-ai-detector    │ PASS/FAIL │ {N}           │
+│ dialogue-reality-enforcer │ PASS/FAIL │ {N}     │
 ├─────────────────────┴───────────┴───────────────┤
 │ critical issues: {N}  |  high issues: {N}       │
 │ 是否可进入润色: {是/否}                           │
@@ -142,8 +153,10 @@ cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/core-constraints.md"
 ```
 
 **Only proceed to Step 4 when:**
-1. 已收到全部 5 份审查报告
+1. 已收到全部 7 份审查报告
 2. 已输出汇总表格
+3. **AI痕迹检测 PASS** (强制要求)
+4. **对话真实性检查 PASS** (强制要求)
 
 ---
 

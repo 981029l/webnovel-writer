@@ -61,6 +61,45 @@ PROMPT_SLOTS: List[Dict[str, Any]] = [
         "filename": "extract-state.md",
         "variables": ["core_constraints", "content"],
     },
+    {
+        "id": "chapter_hard_constraints",
+        "name": "章节硬约束",
+        "group": "写作",
+        "description": "章节正文的通用硬约束（字数、大纲执行、命名一致性等底线规则）。",
+        "filename": "chapter-hard-constraints.md",
+        "variables": [
+            "core_constraints", "worldview", "protagonist_name",
+            "protagonist_desc", "word_count", "word_count_max",
+        ],
+    },
+    {
+        "id": "writing_user_prompt",
+        "name": "写作用户提示词",
+        "group": "写作",
+        "description": "章节创作时发送给模型的 user 消息模板（大纲、角色表、边界红线等）。",
+        "filename": "writing-user-prompt.md",
+        "variables": [
+            "chapter", "next_chapter", "chapter_outline", "recent_context",
+            "active_roster", "character_details", "realtime_status",
+            "entity_libraries", "next_chapter_outline", "chapter_keywords",
+            "next_chapter_keywords", "continuity_summary", "previous_ending",
+            "genre_style_anchor",
+        ],
+    },
+    {
+        "id": "polish",
+        "name": "润色提示词",
+        "group": "润色",
+        "description": "章节润色时的完整系统提示词模板。",
+        "filename": "polish.md",
+        "variables": [
+            "chapter_id", "genre", "substyle", "genre_writer_prompt",
+            "substyle_writer_prompt", "genre_guard", "positive_style_instruction",
+            "substyle_instruction", "chapter_outline", "substyle_examples",
+            "genre_examples", "suggestions", "polish_guide", "typesetting",
+            "content",
+        ],
+    },
 ]
 
 PROMPT_SLOT_MAP = {slot["id"]: slot for slot in PROMPT_SLOTS}
@@ -127,6 +166,12 @@ def _resolve_default_source(slot_id: str, genre: str, substyle: str) -> Optional
         if not normalized_substyle:
             return None
         return DEFAULT_PROMPTS_DIR / "genres" / bucket / "substyles" / f"{normalized_substyle}.md"
+    if slot_id == "chapter_hard_constraints":
+        return DEFAULT_PROMPTS_DIR / "chapter-hard-constraints.md"
+    if slot_id == "writing_user_prompt":
+        return DEFAULT_PROMPTS_DIR / "writing-user-prompt.md"
+    if slot_id == "polish":
+        return DEFAULT_PROMPTS_DIR / "polish.md"
     return None
 
 

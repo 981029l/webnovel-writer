@@ -102,10 +102,45 @@
 cd your-novel-project
 
 # 克隆插件到 .claude 目录
-git clone https://github.com/lingfengQAQ/webnovel-writer.git .claude
+git clone https://github.com/981029l/webnovel-writer.git .claude
 
 # 安装 Python 依赖
 pip install -r .claude/scripts/requirements.txt
+```
+
+### 2. 配置环境变量
+
+```bash
+# 复制环境变量模板
+cp .claude/.env.example .claude/.env
+
+# 编辑配置文件，填入你的 API 密钥
+nano .claude/.env
+```
+
+**必需的 API 密钥**：
+
+| 服务 | 用途 | 获取地址 |
+|------|------|---------|
+| **OpenAI API** | 主要 AI 对话 | [platform.openai.com](https://platform.openai.com/api-keys) |
+| **ModelScope** | 文本嵌入 | [modelscope.cn](https://modelscope.cn/my/myaccesstoken) |
+| **Jina AI** | 重排序 | [jina.ai](https://jina.ai/reranker/) |
+
+**配置示例**：
+```env
+# AI Chat Configuration
+AI_BASE_URL=https://api.openai.com/v1
+AI_API_KEY=sk-your-openai-key-here
+AI_MODEL=gpt-4
+
+# RAG Embedding Configuration
+EMBED_BASE_URL=https://api-inference.modelscope.cn/v1
+EMBED_MODEL=Qwen/Qwen3-Embedding-8B
+EMBED_API_KEY=your-modelscope-token-here
+
+# Rerank Configuration
+RERANK_BASE_URL=https://api.jina.ai/v1
+RERANK_API_KEY=your-jina-key-here
 ```
 
 **Python 依赖说明**：
@@ -115,7 +150,7 @@ pip install -r .claude/scripts/requirements.txt
 | aiohttp | 异步 HTTP 客户端，用于 Embedding/Reranker API 调用 |
 | filelock | 文件锁，防止 state.json 并发写入冲突 |
 
-### 2. 初始化项目
+### 3. 初始化项目
 
 ```bash
 # 在 Claude Code 中执行
@@ -128,28 +163,28 @@ pip install -r .claude/scripts/requirements.txt
 - 设计金手指/核心卖点
 - 生成项目结构和设定模板
 
-### 3. 规划大纲
+### 4. 规划大纲
 
 ```bash
 # 规划第1卷大纲
 /webnovel-plan 1
 ```
 
-### 4. 开始创作
+### 5. 开始创作
 
 ```bash
 # 创作第1章
 /webnovel-write 1
 ```
 
-### 5. 质量审查（可选）
+### 6. 质量审查（可选）
 
 ```bash
 # 审查第1-5章
 /webnovel-review 1-5
 ```
 
-### 6. Web 界面（可选）
+### 7. Web 界面（可选）
 
 除了命令行方式，还可以使用可视化 Web 界面进行创作：
 
@@ -415,7 +450,7 @@ Step 6: Git 自动提交备份
 EMBED_API_TYPE=openai          # openai 兼容接口
 EMBED_BASE_URL=https://api-inference.modelscope.cn/api-inference/v1/models/iic/nlp_corom_sentence-embedding_chinese-base
 EMBED_MODEL=iic/nlp_corom_sentence-embedding_chinese-base
-EMBED_API_KEY=ms-041068cc-89cd-401d-99b6-1a0d9eea31f3
+EMBED_API_KEY=your-modelscope-api-key-here
 
 # Reranker 配置
 RERANK_API_TYPE=openai         # openai (兼容 Jina/Cohere)
@@ -609,8 +644,6 @@ GPL v3 - 详见 [LICENSE](LICENSE)
 ## 致谢
 
 本项目使用 **Claude Code + Gemini CLI + Codex** 配合 Vibe Coding 方式开发。
-
-灵感来源：[Linux.do 帖子](https://linux.do/t/topic/1397944/49)
 
 ---
 
