@@ -102,7 +102,7 @@
 # 进入你的小说项目目录
 cd your-novel-project
 
-# 克隆插件到 .claude 目录
+# 克隆项目
 git clone https://github.com/981029l/webnovel-writer.git .claude
 
 # 安装 Python 依赖
