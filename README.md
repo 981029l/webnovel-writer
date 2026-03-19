@@ -117,176 +117,48 @@ pip install -r .claude/scripts/requirements.txt
 
 ### 2. 初始化项目
 
-```bash
-# 在 Claude Code 中执行
-/webnovel-init
-```
+### 3. 启动 Web 界面
 
-系统会引导你完成：
-- 选择初始化模式（Quick/Standard/Deep）
-- 选择题材类型
-- 设计金手指/核心卖点
-- 生成项目结构和设定模板
-
-### 3. 规划大纲
+推荐使用可视化 Web 界面进行创作，更加直观易用：
 
 ```bash
-# 规划第1卷大纲
-/webnovel-plan 1
+# 启动后端服务（端口 8080）
+cd backend
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8080
+
+# 启动前端界面（新终端，端口 5173）
+cd frontend
+npm install  # 首次运行需要安装依赖
+npm run dev
 ```
 
 ### 4. 开始创作
 
-```bash
-# 创作第1章
-/webnovel-write 1
-```
-
-### 5. 质量审查（可选）
-
-```bash
-# 审查第1-5章
-/webnovel-review 1-5
-```
-
-### 6. Web 界面（可选）
-
-除了命令行方式，还可以使用可视化 Web 界面进行创作：
-
-```bash
-# 启动后端（端口 8080）
-cd backend
-python3 -m uvicorn main:app --host 0.0.0.0 --port 8080
-
-# 启动前端（新终端，端口 5173）
-cd frontend
-npm install  # 首次运行
-npm run dev
-```
-
 打开浏览器访问 http://localhost:5173，即可使用图形界面进行：
-- 项目初始化和配置
-- 大纲编辑（树状图）
-- 章节创作（Markdown 编辑器）
-- 实体管理（角色、伏笔）
-- RAG 语义检索测试
 
----
+- **📝 项目初始化** - 选择题材、设计金手指、生成世界观
+- **🗂️ 大纲编辑** - 树状图可视化编辑卷纲和章纲
+- **✍️ 章节创作** - Markdown 编辑器 + AI 辅助写作
+- **👥 实体管理** - 角色卡片、伏笔管理、设定维护
+- **🔍 语义检索** - RAG 搜索历史内容和相关场景
 
-## 命令详解
+### 5. 高级功能（可选）
 
-### /webnovel-init - 项目初始化
-
-初始化项目结构、题材模板、世界观设定。
-
-**初始化模式**：
-
-| 模式 | 时间 | 内容 |
-|------|------|------|
-| ⚡ Quick | 5分钟 | 基础结构 + 核心卖点 |
-| 📝 Standard | 15-20分钟 | + 金手指设计 + 题材模板 |
-| 🎯 Deep | 30-45分钟 | + 深度世界观 + 创意验证 |
-
-**产出文件**：
-- `.webnovel/state.json` - 项目状态
-- `设定集/` - 世界观、力量体系、角色卡
-- `大纲/总纲.md` - 故事框架
-
----
-
-### /webnovel-plan [卷号] - 大纲规划
-
-制定详细的卷大纲，规划爽点分布和节奏。
+对于熟悉命令行的用户，也可以直接使用 Claude Code Skills：
 
 ```bash
-/webnovel-plan 1        # 规划第1卷
-/webnovel-plan 2-3      # 规划第2-3卷
-```
-
-**产出**：
-- `大纲/第N卷-详细大纲.md`
-- 每章目标、爽点设计、Strand 类型
-- 新增实体预告
-
----
-
-### /webnovel-write [章号] - 章节创作
-
-采用双 Agent 架构的自动化章节创作。
-
-```bash
-/webnovel-write 1       # 创作第1章
-/webnovel-write 45      # 创作第45章
-```
-
-**创作流程**：
-
-```
-Step 1: Context Agent 搜集上下文
-        ↓
-Step 2: 生成 3000-5000 字正文
-        ↓
-Step 3: 5 Agent 并行审查
-        ↓
-Step 4: 润色 + AI 痕迹检测
-        ↓
-Step 5: Data Agent 提取实体/更新索引
-        ↓
-Step 6: Git 自动提交备份
-```
-
-**产出**：
-- `正文/第N章-标题.md`
-- 章节末尾自动附加摘要
-
----
-
-### /webnovel-review [范围] - 质量审查
-
-对已完成章节进行多维度深度扫描。
-
-```bash
-/webnovel-review 1-5    # 审查第1-5章
-/webnovel-review 45     # 审查单章
-```
-
-**审查维度**：
-- 爽点密度与质量
-- 设定一致性
-- 节奏 Strand 分布
-- 人物 OOC 检测
-- 场景连贯性
-
----
-
-### /webnovel-query [关键词] - 信息查询
-
-查询角色、境界、伏笔、系统状态等运行时信息。
-
-```bash
-/webnovel-query 萧炎         # 查询角色信息
-/webnovel-query 伏笔         # 查看待回收伏笔
-/webnovel-query 紧急         # 查看紧急伏笔
+# 在 Claude Code 中执行
+/webnovel-init    # 项目初始化
+/webnovel-plan 1  # 规划第1卷大纲
+/webnovel-write 1 # 创作第1章
+/webnovel-review 1-5  # 质量审查
 ```
 
 ---
 
-### /webnovel-resume - 任务恢复
+## 系统架构
 
-在任务中断时检测中断点并提供安全恢复选项。
-
-```bash
-/webnovel-resume
-```
-
-**恢复选项**：
-- 从断点继续
-- 回滚到上一个安全点
-- 重新开始当前步骤
-
----
-
-## 双 Agent 架构
+### 双 Agent 架构
 
 ### Context Agent（上下文包工程师）
 
@@ -609,8 +481,6 @@ GPL v3 - 详见 [LICENSE](LICENSE)
 ## 致谢
 
 本项目使用 **Claude Code + Gemini CLI + Codex** 配合 Vibe Coding 方式开发。
-
-灵感来源：[Linux.do 帖子](https://linux.do/t/topic/1397944/49)
 
 ---
 
