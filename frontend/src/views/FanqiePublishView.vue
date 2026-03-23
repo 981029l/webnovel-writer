@@ -187,9 +187,34 @@ function confirmAddAccount() {
 // ─── 账号切换 ───
 async function enterAccount(accountName) {
   selectedAccount.value = accountName
-  await fanqieApi.updateConfig({ book_name: bookName.value || '', account_name: accountName })
+  // 切换账号时清空书名和书单，避免用错
+  bookName.value = ''
+  books.value = []
+  configSaved.value = false
+  await fanqieApi.updateConfig({ book_name: '', account_name: accountName })
   await fetchChapters()
-  fetchBooks()
+}
+
+async function loadAccountBooks(accountName) {
+  // 先切换到该账号
+  selectedAccount.value = accountName
+  await fanqieApi.updateConfig({ book_name: bookName.value || '', account_name: accountName })
+  // 加载书单
+  booksLoading.value = true
+  try {
+    const { data } = await fanqieApi.getBooks(accountName)
+    books.value = data.books || []
+    if (books.value.length === 0) {
+      accountValidity.value = { ...accountValidity.value, [accountName]: { valid: false, reason: '未找到书籍或登录失效' } }
+    }
+  } catch (e) {
+    const detail = e.response?.data?.detail || ''
+    if (detail.includes('失效')) {
+      accountValidity.value = { ...accountValidity.value, [accountName]: { valid: false, reason: '登录已失效' } }
+    }
+    books.value = []
+  }
+  booksLoading.value = false
 }
 
 async function verifyAllAccounts() {
@@ -359,7 +384,9 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
             </div>
             <div class="account-actions">
               <button v-if="getAccountStatus(acc.name) === 'expired'" class="btn btn-primary btn-sm" @click="startLogin(acc.name)">重新登录</button>
-              <button v-if="selectedAccount !== acc.name" class="btn btn-primary btn-sm" @click="enterAccount(acc.name)">进入</button>
+              <button class="btn btn-primary btn-sm" @click="loadAccountBooks(acc.name)" :disabled="booksLoading">
+                {{ booksLoading && selectedAccount === acc.name ? '加载中...' : '加载书单' }}
+              </button>
               <a class="btn btn-outline btn-sm" href="https://fanqienovel.com/main/writer/book-manage" target="_blank" rel="noopener">后台</a>
               <button class="btn btn-outline btn-sm btn-danger" @click="doLogout(acc.name)">删除</button>
             </div>
@@ -402,7 +429,7 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
       <section v-if="envReady && hasAnyAccount" class="card">
         <div class="card-header">
           <h2 class="card-title">发布配置</h2>
-          <button class="btn btn-outline btn-sm" @click="fetchBooks" :disabled="booksLoading">刷新书单</button>
+          <span class="text-muted" style="font-size: 0.8rem;">当前账号：{{ selectedAccount || '未选择' }}</span>
         </div>
         <div class="config-body">
           <div class="config-row">

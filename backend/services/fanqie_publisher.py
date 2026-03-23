@@ -553,23 +553,36 @@ def _list_books_sync(account_name: str) -> list:
         if "login" in page.url.lower() or "enter_from" in page.url:
             raise RuntimeError(f"账号 [{account_name}] 登录已失效，请重新登录")
 
-        # 用 JS 从 info-content 卡片提取书名
+        # 用 JS 从 info-content 卡片提取书名和书籍ID
         books = page.evaluate('''() => {
             const cards = document.querySelectorAll('.info-content');
             const result = [];
             for (const card of cards) {
                 const text = (card.innerText || card.textContent || '').trim();
                 if (!text) continue;
-                // 书名是第一行文本，取第一个换行前的内容
-                // 如果没换行，取到"征文作品"或"最近更新"之前的内容
                 let name = text.split('\\n')[0].trim();
-                // 如果整段没换行，用关键词截断
                 for (const kw of ['征文作品', '最近更新', '连载', '完结']) {
                     const idx = name.indexOf(kw);
                     if (idx > 0) { name = name.substring(0, idx).trim(); break; }
                 }
+                // 提取书籍ID：从"章节管理"链接的href中获取
+                let bookId = '';
+                const links = card.querySelectorAll('a');
+                for (const link of links) {
+                    const href = link.getAttribute('href') || '';
+                    const m = href.match(/\\/book\\/([\\d]+)/);
+                    if (m) { bookId = m[1]; break; }
+                }
+                // 也从 book-info 链接获取
+                if (!bookId) {
+                    const allLinks = card.querySelectorAll('a[href*="book"]');
+                    for (const link of allLinks) {
+                        const m = (link.getAttribute('href') || '').match(/(\\d{10,})/);
+                        if (m) { bookId = m[1]; break; }
+                    }
+                }
                 if (name.length >= 2 && name.length <= 50) {
-                    result.push({name: name});
+                    result.push({name: name, book_id: bookId});
                 }
             }
             return result;
@@ -723,54 +736,81 @@ def _check_publish_error(page) -> str:
     return ""
 
 
-def _publish_single_chapter(page, context, book_name, chapter_num, chapter_title, content):
+def _publish_single_chapter(page, context, book_name, chapter_num, chapter_title, content, book_id=""):
     """发布单个章节"""
     try:
-        page.goto(BOOK_MANAGE_URL, timeout=60000)
-        page.wait_for_timeout(3000)
+        # 如果有 book_id，直接跳到章节管理页，不走 book-manage
+        if book_id:
+            chapter_mgmt_url = f"https://fanqienovel.com/main/writer/chapter-manage/{book_id}"
+            print(f"[fanqie] 直接跳转章节管理: {chapter_mgmt_url}")
+            page.goto(chapter_mgmt_url, timeout=60000)
+            page.wait_for_timeout(3000)
+        else:
+            # 没有 book_id，走旧逻辑从 book-manage 页找书
+            page.goto(BOOK_MANAGE_URL, timeout=60000, wait_until="networkidle")
+            page.wait_for_timeout(2000)
 
-        # 先清除可能的弹窗/遮罩
-        for _ in range(3):
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(300)
-        # 关闭 info-content 类弹窗
-        try:
-            for close_sel in ['.info-content .close', '.info-content button', '.modal-close', '[class*="close"]']:
-                close_btn = page.locator(close_sel).first
-                if close_btn.is_visible(timeout=500):
-                    close_btn.click(force=True)
-                    page.wait_for_timeout(300)
-        except Exception:
-            pass
+            # 如果被重定向，重试
+            for retry in range(3):
+                if "book-manage" in page.url:
+                    break
+                print(f"[fanqie] 页面被重定向到 {page.url}，重新导航")
+                page.goto(BOOK_MANAGE_URL, timeout=30000)
+                page.wait_for_timeout(2000)
 
-        # 精确匹配书名：每本书在 div.info-content 容器内
-        clicked = page.evaluate('''(bookName) => {
-            const cards = document.querySelectorAll('.info-content');
-            for (const card of cards) {
-                const text = card.innerText || card.textContent || '';
-                // 检查卡片文本是否包含书名
-                if (text.includes(bookName)) {
-                    const links = card.querySelectorAll('a, button');
-                    for (const link of links) {
-                        if (link.textContent.trim() === '章节管理') {
-                            link.click();
-                            return true;
+            if "book-manage" not in page.url:
+                try:
+                    page.get_by_text("作品管理").first.click(force=True)
+                    page.wait_for_timeout(3000)
+                except Exception:
+                    pass
+
+            page.wait_for_timeout(1000)
+
+            # 清弹窗
+            for _ in range(3):
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(300)
+            try:
+                for close_sel in ['.info-content .close', '.info-content button', '.modal-close', '[class*="close"]']:
+                    close_btn = page.locator(close_sel).first
+                    if close_btn.is_visible(timeout=500):
+                        close_btn.click(force=True)
+                        page.wait_for_timeout(300)
+            except Exception:
+                pass
+
+            # 精确匹配书名找章节管理入口
+            match_info = page.evaluate('''(bookName) => {
+                const cards = document.querySelectorAll('.info-content');
+                const debug = {cards: cards.length, texts: [], url: window.location.href};
+                for (const card of cards) {
+                    const text = (card.innerText || card.textContent || '').trim();
+                    debug.texts.push(text.substring(0, 60));
+                    if (text.includes(bookName)) {
+                        const links = card.querySelectorAll('a, button');
+                        for (const link of links) {
+                            if (link.textContent.trim() === '章节管理') {
+                                link.click();
+                                return {clicked: true, debug: debug};
+                            }
                         }
                     }
                 }
-            }
-            return false;
-        }''', book_name)
-        if not clicked:
-            raise Exception(f"未找到书籍「{book_name}」的章节管理入口")
+                return {clicked: false, debug: debug};
+            }''', book_name)
+            print(f"[fanqie] 匹配结果: {match_info}")
+            if not match_info.get("clicked"):
+                debug = match_info.get("debug", {})
+                raise Exception(f"未找到书籍「{book_name}」的章节管理入口 (页面有{debug.get('cards',0)}本书, URL={debug.get('url','')})")
 
-        page.wait_for_timeout(4000)
-        original_pages = len(context.pages)
+            page.wait_for_timeout(4000)
+
+        # ── 现在已经在章节管理页 ──
+        editor_page = page
         # 章节管理可能打开新标签页
         if len(context.pages) > 1:
             editor_page = context.pages[-1]
-        else:
-            editor_page = page
 
         # 清弹窗/遮罩（章节管理页也可能有）
         for _ in range(3):
@@ -815,7 +855,7 @@ def _publish_single_chapter(page, context, book_name, chapter_num, chapter_title
                 raise Exception("未找到'新建章节'按钮，番茄页面可能已更新或登录已失效")
 
         page.wait_for_timeout(4000)
-        if len(context.pages) > original_pages:
+        if len(context.pages) > 1:
             editor_page = context.pages[-1]
 
         # 清弹窗
@@ -925,6 +965,7 @@ def _publish_chapters_sync(project_root, book_name, account_name, chapter_ids):
     global _publish_state
     root = Path(project_root)
     state_file = _account_file(account_name)
+    print(f"[fanqie] 发布: 账号={account_name}, 书名={book_name}, 章节={chapter_ids}, cookie文件={state_file}")
 
     if not state_file.exists():
         _publish_state.update({"active": False, "status": "error", "message": f"账号 [{account_name}] 未登录"})
@@ -962,6 +1003,36 @@ def _publish_chapters_sync(project_root, book_name, account_name, chapter_ids):
     config = _load_fanqie_config(root)
     results = []
 
+    # 先获取 book_id：到 book-manage 页提取
+    book_id = ""
+    try:
+        page.goto(BOOK_MANAGE_URL, timeout=30000)
+        page.wait_for_timeout(4000)
+        book_id = page.evaluate('''(bookName) => {
+            const cards = document.querySelectorAll('.info-content');
+            for (const card of cards) {
+                const text = (card.innerText || card.textContent || '').trim();
+                if (text.includes(bookName)) {
+                    const links = card.querySelectorAll('a[href]');
+                    for (const link of links) {
+                        const m = (link.getAttribute('href') || '').match(/(\\d{10,})/);
+                        if (m) return m[1];
+                    }
+                }
+            }
+            return '';
+        }''', book_name)
+        print(f"[fanqie] 获取到 book_id={book_id}")
+    except Exception as e:
+        print(f"[fanqie] 获取 book_id 失败: {e}")
+
+    # 如果从 URL 中也能提取（比如被重定向到 book-info 页）
+    if not book_id:
+        m = re.search(r'/(\d{10,})', page.url)
+        if m:
+            book_id = m.group(1)
+            print(f"[fanqie] 从URL提取 book_id={book_id}")
+
     try:
         for idx, cid in enumerate(sorted_ids):
             fp = chapter_files[cid]
@@ -975,7 +1046,7 @@ def _publish_chapters_sync(project_root, book_name, account_name, chapter_ids):
                 "message": f"正在上传第{cnum}章..."
             })
 
-            r = _publish_single_chapter(page, context, book_name, cnum, ctitle, body)
+            r = _publish_single_chapter(page, context, book_name, cnum, ctitle, body, book_id=book_id)
             if r["success"]:
                 success_count += 1
                 config.setdefault("published_chapters", [])
