@@ -290,6 +290,21 @@ function clearSelection() { selectedIds.value = new Set() }
 // ─── 发布（轮询） ───
 let publishPollTimer = null
 
+async function stopAllTasks() {
+  try {
+    await fanqieApi.stopPublish()
+    await fanqieApi.closeAllBrowsers()
+    publishing.value = false
+    publishDone.value = false
+    if (publishPollTimer) { clearInterval(publishPollTimer); publishPollTimer = null }
+    loginLoading.value = false
+    loginBrowserOpen.value = false
+    stopLoginPoll()
+  } catch (e) {
+    console.error('停止任务失败:', e)
+  }
+}
+
 async function startPublish() {
   if (!canPublish.value) return
   publishing.value = true
@@ -502,7 +517,10 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
         <div class="publish-controls">
           <span v-if="selectedIds.size > 0">已选择 {{ selectedIds.size }} 个章节</span>
           <span v-else class="text-muted">请选择要上传的章节</span>
-          <button class="btn btn-primary" :disabled="!canPublish" @click="startPublish">开始上传</button>
+          <div class="publish-btns">
+            <button class="btn btn-outline btn-sm btn-danger" @click="stopAllTasks">停止所有任务</button>
+            <button class="btn btn-primary" :disabled="!canPublish" @click="startPublish">开始上传</button>
+          </div>
         </div>
 
         <div v-if="publishing || publishDone" class="publish-progress">
@@ -600,6 +618,7 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.8125rem; }
 .btn-danger:hover:not(:disabled) { border-color: var(--error, #ef4444); color: var(--error, #ef4444); }
 .header-actions { display: flex; gap: 0.5rem; }
+.publish-btns { display: flex; gap: 0.5rem; }
 .status-badge { font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.75rem; border-radius: 999px; }
 .status-online { background: rgba(34,197,94,0.1); color: var(--success, #22c55e); }
 .status-expired { background: rgba(239,68,68,0.1); color: var(--error, #ef4444); }

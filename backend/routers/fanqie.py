@@ -184,3 +184,9 @@ async def publish_chapters(data: FanqiePublishRequest, root: Path = Depends(get_
 async def poll_publish():
     """轮询发布进度"""
     return fanqie_publisher.get_publish_poll()
+
+
+@router.post("/publish/stop")
+async def stop_publish():
+    """强制停止发布任务"""
+    return fanqie_publisher.stop_publish()

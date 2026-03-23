@@ -166,6 +166,7 @@ export const fanqieApi = {
     syncChapters: () => api.post('/fanqie/chapters/sync'),
     startPublish: (chapterIds) => api.post('/fanqie/publish', { chapter_ids: chapterIds }),
     pollPublish: () => api.get('/fanqie/publish/poll'),
+    stopPublish: () => api.post('/fanqie/publish/stop'),
 }
 
 export default api

@@ -1095,5 +1095,18 @@ def start_publish_background(project_root, book_name, account_name, chapter_ids)
     return {"ok": True, "message": "发布任务已启动"}
 
 
+def stop_publish() -> dict:
+    """强制停止发布任务并重置状态"""
+    was_active = _publish_state["active"]
+    _publish_state.update({
+        "active": False, "status": "idle", "message": "",
+        "current": 0, "total": 0, "chapter_title": "",
+        "success_count": 0, "fail_count": 0, "results": []
+    })
+    # 同时关闭所有浏览器会话
+    close_all_browsers()
+    return {"ok": True, "message": "已停止" if was_active else "无运行中的任务"}
+
+
 def get_publish_poll() -> dict:
     return dict(_publish_state)
