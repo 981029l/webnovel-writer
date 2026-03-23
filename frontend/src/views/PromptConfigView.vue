@@ -348,17 +348,21 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .prompt-config-page {
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
   background:
     radial-gradient(circle at top left, rgba(198, 118, 53, 0.12), transparent 28%),
     radial-gradient(circle at 85% 20%, rgba(115, 74, 36, 0.10), transparent 24%),
     linear-gradient(180deg, #f7f1e7 0%, #f9f7f2 42%, #fcfbf8 100%);
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .page-shell {
   max-width: 1180px;
   margin: 0 auto;
+  min-height: 100%;
+  box-sizing: border-box;
   padding: 2.25rem 2rem 4rem;
 }
 

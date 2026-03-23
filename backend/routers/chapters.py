@@ -2,6 +2,7 @@
 """章节管理 API"""
 
 import json
+import hashlib
 import re
 import time
 from pathlib import Path
@@ -15,6 +16,7 @@ from dependencies import get_project_root
 router = APIRouter()
 _extract_ok: set[int] = set() # 追踪已成功提取的章节，避免重复提取
 _tasks: Dict[str, Dict[str, Any]] = {}  # 模块级任务存储
+_SETTING_SYNC_KEY = "setting_sync"
 
 
 class ChapterInfo(BaseModel):
@@ -130,6 +132,146 @@ def parse_chapter_file(file_path: Path) -> dict:
     }
 
 
+def _load_project_state(root: Path) -> Dict[str, Any]:
+    state_file = root / ".webnovel" / "state.json"
+    if not state_file.exists():
+        return {}
+    try:
+        return json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _update_project_state(root: Path, updater) -> Dict[str, Any]:
+    webnovel_dir = root / ".webnovel"
+    webnovel_dir.mkdir(parents=True, exist_ok=True)
+    state_file = webnovel_dir / "state.json"
+
+    state: Dict[str, Any] = {}
+    if state_file.exists():
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+
+    updater(state)
+    state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return state
+
+
+def _ensure_setting_sync_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    sync_state = state.get(_SETTING_SYNC_KEY)
+    if not isinstance(sync_state, dict):
+        sync_state = {}
+        state[_SETTING_SYNC_KEY] = sync_state
+
+    synced_hashes = sync_state.get("synced_hashes")
+    if not isinstance(synced_hashes, dict):
+        synced_hashes = {}
+        sync_state["synced_hashes"] = synced_hashes
+
+    return sync_state
+
+
+def _chapter_content_hash(content: str) -> str:
+    return hashlib.sha1((content or "").encode("utf-8")).hexdigest()
+
+
+def _list_existing_chapters(root: Path) -> List[Dict[str, Any]]:
+    chapters_dir = root / "正文"
+    if not chapters_dir.exists():
+        return []
+
+    chapter_map: Dict[int, Dict[str, Any]] = {}
+    for file_path in sorted(chapters_dir.glob("第*章*.md")):
+        info = parse_chapter_file(file_path)
+        chapter_id = int(info.get("id") or 0)
+        if chapter_id <= 0 or chapter_id in chapter_map:
+            continue
+        chapter_map[chapter_id] = info
+
+    return [chapter_map[k] for k in sorted(chapter_map)]
+
+
+def _has_syncable_chapter_content(info: Dict[str, Any]) -> bool:
+    """仅正文非空的章节才参与设定同步统计。"""
+    try:
+        return int(info.get("word_count") or 0) > 0
+    except Exception:
+        return bool((info.get("content") or "").strip())
+
+
+def _compute_setting_sync_status(root: Path) -> Dict[str, Any]:
+    state = _load_project_state(root)
+    sync_state = _ensure_setting_sync_state(state)
+    synced_hashes = sync_state.get("synced_hashes", {})
+    all_chapters = _list_existing_chapters(root)
+
+    pending_items: List[Dict[str, Any]] = []
+    chapter_items: List[Dict[str, Any]] = []
+    skipped_empty_items: List[Dict[str, Any]] = []
+    synced_count = 0
+    last_synced_chapter = 0
+
+    for info in all_chapters:
+        chapter_id = int(info["id"])
+        if not _has_syncable_chapter_content(info):
+            skipped_empty_items.append({
+                "id": chapter_id,
+                "title": info.get("title") or f"第{chapter_id}章",
+            })
+            continue
+
+        current_hash = _chapter_content_hash(info.get("content", ""))
+        synced = synced_hashes.get(str(chapter_id)) == current_hash
+        chapter_item = {
+            "id": chapter_id,
+            "title": info.get("title") or f"第{chapter_id}章",
+            "synced": synced,
+        }
+        chapter_items.append(chapter_item)
+        if synced:
+            synced_count += 1
+            if chapter_id > last_synced_chapter:
+                last_synced_chapter = chapter_id
+        else:
+            pending_items.append(chapter_item)
+
+    pending_items.sort(key=lambda item: item["id"])
+    chapter_items.sort(key=lambda item: item["id"])
+
+    last_continuous_synced_chapter = 0
+    for item in chapter_items:
+        if item["id"] == last_continuous_synced_chapter + 1 and item["synced"]:
+            last_continuous_synced_chapter = item["id"]
+            continue
+        if item["id"] > last_continuous_synced_chapter + 1 or not item["synced"]:
+            break
+
+    return {
+        "total_chapters": len(chapter_items),
+        "synced_chapters": synced_count,
+        "pending_chapters": len(pending_items),
+        "last_synced_chapter": last_synced_chapter,
+        "last_continuous_synced_chapter": last_continuous_synced_chapter,
+        "pending_items": pending_items,
+        "chapter_items": chapter_items,
+        "skipped_empty_chapters": len(skipped_empty_items),
+        "skipped_empty_items": skipped_empty_items,
+    }
+
+
+def _mark_chapter_setting_synced(root: Path, chapter_id: int, content: str) -> None:
+    content_hash = _chapter_content_hash(content)
+
+    def apply(state: Dict[str, Any]) -> None:
+        sync_state = _ensure_setting_sync_state(state)
+        sync_state["synced_hashes"][str(chapter_id)] = content_hash
+        sync_state["last_synced_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    _update_project_state(root, apply)
+
+
 def _safe_title_for_filename(title: str) -> str:
     text = (title or "").strip()
     text = re.sub(r"[\\/:*?\"<>|]+", " ", text)
@@ -238,6 +380,112 @@ async def get_chapter_stats(root: Path = Depends(get_project_root)):
         "total_chapters": total_chapters,
         "total_words": total_words,
         "avg_words": avg_words
+    }
+
+
+@router.get("/sync/status")
+async def get_setting_sync_status(root: Path = Depends(get_project_root)):
+    """获取章节设定同步状态。"""
+    return _compute_setting_sync_status(root)
+
+
+@router.post("/sync/missing")
+async def sync_missing_chapters(root: Path = Depends(get_project_root)):
+    """按章节顺序补同步未更新章节。"""
+    status = _compute_setting_sync_status(root)
+    pending_items = status.get("pending_items", [])
+
+    if not pending_items:
+        skipped_empty_chapters = int(status.get("skipped_empty_chapters") or 0)
+        message = "当前没有未同步章节"
+        if skipped_empty_chapters:
+            message = f"当前没有可同步章节（已跳过 {skipped_empty_chapters} 个空章节）"
+        return {
+            "success": True,
+            "task_id": None,
+            "message": message,
+            "status": status,
+        }
+
+    import asyncio
+    import uuid
+    from services.skill_executor import SkillExecutor
+    from services.ai_service import get_ai_service
+
+    task_id = str(uuid.uuid4())[:8]
+    total = len(pending_items)
+    _tasks[task_id] = {
+        "status": "running",
+        "message": f"准备补同步 {total} 章",
+        "progress": 0,
+        "total": total,
+    }
+
+    async def sync_background():
+        synced: List[int] = []
+        failed: List[Dict[str, Any]] = []
+        chapters_dir = root / "正文"
+        ai_service = get_ai_service()
+        executor = SkillExecutor(project_root=root, ai_service=ai_service)
+
+        try:
+            for index, item in enumerate(pending_items, start=1):
+                chapter_id = int(item["id"])
+                _tasks[task_id] = {
+                    "status": "running",
+                    "message": f"正在同步第{chapter_id}章（{index}/{total}）",
+                    "progress": index - 1,
+                    "total": total,
+                    "current_chapter": chapter_id,
+                }
+
+                files = _find_chapter_files(chapters_dir, chapter_id)
+                if not files:
+                    failed.append({"chapter": chapter_id, "error": "章节文件不存在"})
+                    continue
+
+                chapter_file = files[0]
+                content = chapter_file.read_text(encoding="utf-8")
+                if not content.strip():
+                    failed.append({"chapter": chapter_id, "error": "章节内容为空"})
+                    continue
+
+                try:
+                    await executor._update_character_state(chapter_id, content)
+                    _mark_chapter_setting_synced(root, chapter_id, content)
+                    _extract_ok.add(chapter_id)
+                    synced.append(chapter_id)
+                except Exception as exc:
+                    _extract_ok.discard(chapter_id)
+                    failed.append({"chapter": chapter_id, "error": str(exc)[:200]})
+
+            latest_status = _compute_setting_sync_status(root)
+            _tasks[task_id] = {
+                "status": "completed",
+                "message": f"补同步完成：成功 {len(synced)} 章，失败 {len(failed)} 章",
+                "progress": total,
+                "total": total,
+                "result": {
+                    "synced": synced,
+                    "failed": failed,
+                    "status": latest_status,
+                },
+                "_done_at": time.time(),
+            }
+        except Exception as exc:
+            _tasks[task_id] = {
+                "status": "error",
+                "message": str(exc)[:200],
+                "_done_at": time.time(),
+            }
+
+    asyncio.create_task(sync_background())
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "message": f"已开始补同步 {total} 章",
+        "status": status,
     }
 
 
@@ -422,6 +670,8 @@ async def force_extract_chapter(chapter_id: int, root: Path = Depends(get_projec
             ai_service = get_ai_service()
             executor = SkillExecutor(project_root=root, ai_service=ai_service)
             await executor._update_character_state(chapter_id, content)
+            _mark_chapter_setting_synced(root, chapter_id, content)
+            _extract_ok.add(chapter_id)
             _tasks[task_id] = {"status": "completed", "message": "世界观提取完成", "_done_at": time.time()}
             print(f"[世界观系统] 第{chapter_id}章强制提取完成")
         except Exception as e:
@@ -511,6 +761,7 @@ async def extract_apply(chapter_id: int, req: ExtractApplyRequest, root: Path = 
         executor = SkillExecutor(project_root=root, ai_service=ai_service)
         summary = await executor._apply_extraction_results(chapter_id, content, req.extraction)
         _extract_ok.add(chapter_id)
+        _mark_chapter_setting_synced(root, chapter_id, content)
         return {"success": True, **summary}
     except Exception as e:
         import traceback

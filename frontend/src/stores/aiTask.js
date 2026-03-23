@@ -25,12 +25,16 @@ export const useAiTaskStore = defineStore('aiTask', () => {
 
     const statusText = computed(() => {
         if (isRunning.value) {
-            return `⏳ ${taskName.value}...`
+            return taskDetail.value
+                ? `⏳ ${taskName.value} · ${taskDetail.value}`
+                : `⏳ ${taskName.value}...`
         }
         if (result.value) {
-            return result.value.success
-                ? `✓ ${taskName.value} 完成`
-                : `✗ ${taskName.value} 失败`
+            return result.value.message || (
+                result.value.success
+                    ? `✓ ${taskName.value} 完成`
+                    : `✗ ${taskName.value} 失败`
+            )
         }
         return ''
     })
@@ -44,7 +48,7 @@ export const useAiTaskStore = defineStore('aiTask', () => {
         result.value = null
         streamContent.value = ''
         streamTarget.value = ''
-        // 不清空 initSteps，除非显式调用
+        initSteps.value = []
     }
 
     function completeTask(success, message = '', path = '') {
@@ -55,6 +59,10 @@ export const useAiTaskStore = defineStore('aiTask', () => {
     function failTask(message) {
         isRunning.value = false
         result.value = { success: false, message }
+    }
+
+    function updateTaskDetail(detail = '') {
+        taskDetail.value = detail
     }
 
     function clearTask() {
@@ -151,6 +159,7 @@ export const useAiTaskStore = defineStore('aiTask', () => {
         startTask,
         completeTask,
         failTask,
+        updateTaskDetail,
         clearTask,
         updateStep,
         initProjectAction

@@ -66,7 +66,7 @@ def _extract_protagonist_name(root: Path, settings_dir: Path) -> str:
     return ""
 
 
-@router.get("/")
+@router.get("")
 async def list_characters(root: Path = Depends(get_project_root)):
     """获取世界观设定库列表（角色/宝物/功法/势力/地点）"""
     settings_dir = root / "设定集"

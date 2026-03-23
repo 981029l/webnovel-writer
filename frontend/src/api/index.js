@@ -3,8 +3,10 @@
 
 import axios from 'axios'
 
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api'
+
 const api = axios.create({
-    baseURL: 'http://localhost:8080/api',
+    baseURL: apiBaseUrl,
     timeout: 600000, // 10分钟超时，支持 AI 长时间请求
     headers: {
         'Content-Type': 'application/json'
@@ -50,6 +52,8 @@ export const chaptersApi = {
     get: (id) => api.get(`/chapters/${id}`),
     update: (id, data, opts) => api.put(`/chapters/${id}`, data, opts && opts.projectRoot ? { params: { project_root: opts.projectRoot } } : undefined),
     delete: (id) => api.delete(`/chapters/${id}`),
+    getSyncStatus: () => api.get('/chapters/sync/status'),
+    syncMissing: () => api.post('/chapters/sync/missing'),
     write: (data) => api.post('/chapters/write', data),
     review: (chapters) => api.post('/chapters/review', { chapters }),
     getStats: () => api.get('/chapters/stats'),
@@ -123,12 +127,12 @@ export const aiApi = {
         body: JSON.stringify({ volume, content, requirements })
     }),
 
-    polishChapterStream: (chapterId, content, suggestions) => fetch(`${api.defaults.baseURL}/ai/polish-stream`, {
+    polishChapterStream: (chapterId, content, suggestions, mode = 'rewrite') => fetch(`${api.defaults.baseURL}/ai/polish-stream`, {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ chapter_id: chapterId, content, suggestions })
+        body: JSON.stringify({ chapter_id: chapterId, content, suggestions, mode })
     }),
-    polishChapter: (chapterId, content, suggestions) => api.post('/ai/polish', { chapter_id: chapterId, content, suggestions }),
+    polishChapter: (chapterId, content, suggestions, mode = 'rewrite') => api.post('/ai/polish', { chapter_id: chapterId, content, suggestions, mode }),
     generateSynopsis: () => api.post('/ai/generate-synopsis'),
     generateTitles: () => api.post('/ai/generate-titles'),
     updateProjectInfo: (data) => api.put('/projects/info', data),
@@ -144,6 +148,21 @@ export const charactersApi = {
     delete: (path) => api.delete('/characters/file', { params: { path } }),
     getRelationships: () => api.get('/characters/relationships'),
     getProfile: (name) => api.get('/characters/profile', { params: { name } })
+}
+
+// 番茄自动上传 API
+export const fanqieApi = {
+    getStatus: () => api.get('/fanqie/status'),
+    startLogin: (accountName) => api.post('/fanqie/login', { account_name: accountName || '默认账号' }),
+    pollLogin: () => api.get('/fanqie/login/poll'),
+    closeLoginBrowser: () => api.post('/fanqie/login/close'),
+    logout: (accountName) => api.post('/fanqie/logout', { account_name: accountName }),
+    getBooks: (accountName) => api.get('/fanqie/books', { params: { account_name: accountName || '默认账号' } }),
+    updateConfig: (config) => api.put('/fanqie/config', config),
+    getChapters: () => api.get('/fanqie/chapters'),
+    syncChapters: () => api.post('/fanqie/chapters/sync'),
+    startPublish: (chapterIds) => api.post('/fanqie/publish', { chapter_ids: chapterIds }),
+    pollPublish: () => api.get('/fanqie/publish/poll'),
 }
 
 export default api

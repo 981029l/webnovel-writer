@@ -69,6 +69,11 @@ const routes = [
                 path: 'relations',
                 name: 'relations',
                 component: () => import('../views/RelationGraphView.vue')
+            },
+            {
+                path: 'fanqie',
+                name: 'fanqie',
+                component: () => import('../views/FanqiePublishView.vue')
             }
         ]
     },
