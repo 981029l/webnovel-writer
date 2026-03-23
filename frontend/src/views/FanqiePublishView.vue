@@ -450,8 +450,8 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
                 {{ book.name }}
               </span>
             </div>
-            <div v-else-if="!booksLoading && hasAnyAccount" class="empty-hint" style="padding: 0.75rem 0; text-align: left;">
-              未找到书籍，请先在番茄后台创建
+            <div v-else-if="!booksLoading && hasAnyAccount && !bookName" class="empty-hint" style="padding: 0.75rem 0; text-align: left;">
+              请先点击上方账号旁的「加载书单」按钮获取书籍列表
             </div>
 
             <!-- 手动输入（折叠） -->
