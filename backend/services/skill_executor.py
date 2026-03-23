@@ -3255,6 +3255,12 @@ class SkillExecutor:
 
             (self.project_root / "大纲" / "总纲.md").write_text(full_content, encoding="utf-8")
             self._clear_outline_invalidation_state()
+
+            # 从大纲中提取主角名，确保主角档案和 state.json 同步
+            protagonist_name = self._resolve_protagonist_name()
+            if protagonist_name:
+                self._sync_protagonist_profile(protagonist_name)
+
             yield make_event("step", name="AI 规划总纲", status="completed")
             yield make_event("done", success=True, message="总纲规划完成")
 
@@ -6588,7 +6594,73 @@ class SkillExecutor:
             prog["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         self._update_state(_updater)
+
+        # ── 确保主角档案存在 ──
+        if protagonist_name:
+            self._ensure_protagonist_profile(protagonist_name, chapter, status_changes)
+
         print(f"[状态系统] state.json 已同步（第{chapter}章提取结果）")
+
+    def _ensure_protagonist_profile(self, name: str, chapter: int, status_changes: list) -> None:
+        """如果主角档案不存在，自动创建。"""
+        existing = self._find_character_file_by_name(name)
+        if existing:
+            return
+
+        char_lib = self.project_root / "设定集" / "角色库"
+        main_dir = char_lib / "主要角色"
+        main_dir.mkdir(parents=True, exist_ok=True)
+
+        # 从大纲中尝试获取更多主角信息
+        realm = ""
+        identity = "主角"
+        for sc in status_changes:
+            if self._normalize_entity_name(sc.get("name", "")) == name:
+                realm = sc.get("realm", "") or realm
+
+        # 尝试从大纲提取境界和身份
+        outline_dir = self.project_root / "大纲"
+        if outline_dir.exists():
+            for f in sorted(outline_dir.glob("*.md")):
+                text = f.read_text(encoding="utf-8")
+                # 匹配初始境界
+                m = re.search(r"初始境界[：:]\s*\*?\*?([^*\n]+)", text)
+                if m and not realm:
+                    realm = m.group(1).strip()
+                # 匹配身份
+                m = re.search(r"身份[：:]\s*([^\n]+)", text)
+                if m:
+                    identity = m.group(1).strip()
+                if realm:
+                    break
+
+        profile_path = main_dir / f"{name}.md"
+        profile_path.write_text(f"""# {name}
+
+## 基本信息
+- **身份**：{identity}
+- **首次出场**：第1章
+- **当前境界**：{realm or '未知'}
+- **当前状态**：存活
+- **当前地点**：未知
+- **最后更新章节**：第{chapter}章
+
+## 与主角关系
+主角本人
+
+## 外貌描写
+待补充（从正文中提取）
+
+## 性格特点
+待补充
+
+## 关键事件时间线
+- 第1章：初次登场
+
+---
+*档案创建于第{chapter}章设定同步后*
+""", encoding="utf-8")
+        print(f"[角色系统] 自动创建主角档案: 主要角色/{name}.md")
 
     async def _update_character_state(self, chapter: int, content: str) -> None:
         """分析章节内容，自动更新活跃角色表 + 创建新角色档案（向后兼容包装）"""

@@ -223,7 +223,9 @@ async function doDeleteVolume() {
     deleteVolumeTarget.value = null
     if (withCharacters) {
       const c = data?.deleted_character_count || 0
-      message.value = c > 0 ? `✓ 已删除（联动删除角色 ${c} 个）` : '✓ 已删除（无可联动删除角色）'
+      const e = data?.deleted_entity_count || 0
+      const total = c + e
+      message.value = total > 0 ? `✓ 已删除（联动删除角色 ${c} 个，其他设定 ${e} 个）` : '✓ 已删除（无可联动删除档案）'
     } else {
       message.value = '✓ 已删除'
     }
@@ -607,10 +609,10 @@ async function executeAiPolish(volume, requirements) {
         </label>
         <label class="delete-option danger">
           <input v-model="deleteVolumeMode" type="radio" value="with_characters" />
-          <span>连同该卷自动生成角色一起删（危险）</span>
+          <span>连同该卷自动生成的设定档案一起删（危险）</span>
         </label>
         <p class="delete-note" v-if="deleteVolumeMode === 'with_characters'">
-          只会删除带“档案创建于第{{ deleteVolumeTarget }}卷大纲生成时”标记的角色档案，并尝试同步活跃角色表。
+          只会删除带「档案创建于第{{ deleteVolumeTarget }}卷大纲生成时」标记的角色、宝物、功法、势力、地点档案，并尝试同步活跃角色表。
         </p>
       </div>
     </ConfirmDialog>
