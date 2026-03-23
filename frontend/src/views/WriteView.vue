@@ -6,8 +6,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { chaptersApi, aiApi, outlinesApi } from '../api'
 import { useProjectStore } from '../stores/project'
 import { useAiTaskStore } from '../stores/aiTask'
+import { useSettingSyncStore } from '../stores/settingSync'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
-import ExtractionPreviewDialog from '../components/ExtractionPreviewDialog.vue'
+import { copyText } from '../utils/clipboard'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,14 +25,17 @@ const saving = ref(false)
 const saveType = ref(null)
 const aiWriting = ref(false)
 const aiPolishing = ref(false)
+const aiRevising = ref(false)
 const aiReviewing = ref(false)
 const copying = ref(false)
+const copyingTitle = ref(false)
 const message = ref('')
 
-// 弹窗提示状态
-const showPopup = ref(false)
-const popupMessage = ref('')
-const popupType = ref('info') // info, success, warning
+// Auto Batch State
+const autoBatchRunning = ref(false)
+const autoBatchTotal = ref(5)
+const autoBatchCurrent = ref(0)
+const showAutoBatchDialog = ref(false)
 
 // Dialog State
 const showPolishDialog = ref(false)
@@ -44,17 +48,39 @@ const endingPlan = ref(null)
 const generatingEnding = ref(false)
 const remainingChapters = ref(5)
 
-// Extraction Preview State
-const extracting = ref(false)
-const showExtractionPreview = ref(false)
-const extractionResult = ref(null)
-const applyingExtraction = ref(false)
+const settingSyncStore = useSettingSyncStore()
+
+function getCopyableChapterContent() {
+  const raw = editContent.value || ''
+  if (!raw) return ''
+
+  const normalizedTitle = (editTitle.value || '').trim()
+  const chapterId = currentChapter.value?.id
+  const lines = raw.split(/\r?\n/)
+  const firstNonEmptyIndex = lines.findIndex(line => line.trim())
+
+  if (firstNonEmptyIndex === -1) {
+    return ''
+  }
+
+  const firstLine = lines[firstNonEmptyIndex].trim()
+  const plainHeading = firstLine.replace(/^#+\s*/, '').trim()
+  const matchesChapterNumber = chapterId && plainHeading.startsWith(`第${chapterId}章`)
+  const matchesTitleOnly = normalizedTitle && plainHeading === normalizedTitle
+
+  if (matchesChapterNumber || matchesTitleOnly) {
+    return lines.slice(firstNonEmptyIndex + 1).join('\n').replace(/^\s+/, '')
+  }
+
+  return raw
+}
 
 async function copyContent() {
-  if (!editContent.value) return
+  const contentToCopy = getCopyableChapterContent()
+  if (!contentToCopy) return
   copying.value = true
   try {
-    await navigator.clipboard.writeText(editContent.value)
+    await copyText(contentToCopy)
     message.value = '✓ 已复制到剪贴板'
     setTimeout(() => { if (message.value === '✓ 已复制到剪贴板') message.value = '' }, 2000)
   } catch (err) {
@@ -63,8 +89,60 @@ async function copyContent() {
     copying.value = false
   }
 }
+
+async function copyTitle() {
+  const titleToCopy = (editTitle.value || '').trim()
+  if (!titleToCopy) return
+  copyingTitle.value = true
+  try {
+    await copyText(titleToCopy)
+    message.value = '✓ 已复制到剪贴板'
+    setTimeout(() => { if (message.value === '✓ 已复制到剪贴板') message.value = '' }, 2000)
+  } catch (err) {
+    message.value = '✗ 复制失败'
+  } finally {
+    copyingTitle.value = false
+  }
+}
 const reviewResult = ref(null)
 const showSidebar = ref(true)
+const MAX_AUTO_REVIEW_FIX_ROUNDS = 4
+
+function hasBlockingReviewIssues(reviewText = '') {
+  const text = (reviewText || '').trim()
+  if (!text) return false
+
+  const passSignals = /(无需修改|可直接采用|质量良好|无明显问题|无问题|整体优秀|完美契合|无设定冲突|无冲突|设定一致|无矛盾|无需改动|无修改意见|可直接发布)/i
+  if (passSignals.test(text)) return false
+
+  if (/P0\s*[:：]\s*(?!无|没有|未发现|不存在|0|零)/i.test(text)) return true
+  if (/P1\s*[:：]\s*(?!无|没有|未发现|不存在|0|零)/i.test(text)) return true
+
+  const negation = /(无|没有|未发现|未检出|不存在|不|零|未)/
+  const severePatterns = [
+    /设定(?:一致性)?(?:冲突|错误|不一致)/i,
+    /地点(?:冲突|错误|不一致)/i,
+    /角色名(?:错误|冲突|不一致|漂移)/i,
+    /主角命名漂移/i,
+    /(?:风格跑偏|玄幻笔调不足)/i,
+    /(?:内容)?(?:疑似)?(?:截断|半句|未写完|未完成)/i,
+    /(?:严重|高危).{0,6}BUG/i,
+    /(?:需|必须)\s*(?:立即|尽快)?\s*修改/i
+  ]
+
+  for (const pattern of severePatterns) {
+    const match = text.match(pattern)
+    if (!match || match.index == null) continue
+    const start = match.index
+    const end = start + match[0].length
+    const prefix = text.slice(Math.max(0, start - 8), start)
+    const suffix = text.slice(end, Math.min(text.length, end + 8))
+    if (negation.test(prefix) || negation.test(suffix)) continue
+    return true
+  }
+
+  return false
+}
 
 onMounted(async () => {
   await loadChapters()
@@ -111,14 +189,15 @@ function handleKeydown(e) {
 }
 
 watch(() => route.params.chapter, async (newChapter) => {
-  if (aiWriting.value || aiPolishing.value) return
+  if (autoBatchRunning.value) return  // 批量模式下由 navigateToNextChapter 手动加载
+  if (aiWriting.value || aiPolishing.value || aiRevising.value) return
   if (newChapter) {
     await loadChapter(parseInt(newChapter))
   }
 })
 
 watch(() => projectStore.projectRoot, async (newRoot, oldRoot) => {
-  if (aiWriting.value || aiPolishing.value) return
+  if (aiWriting.value || aiPolishing.value || aiRevising.value) return
   if (!newRoot || newRoot === oldRoot) return
   chapters.value = []
   volumeTree.value = []
@@ -217,6 +296,29 @@ async function loadChapter(id) {
   }
 }
 
+async function persistChapter(chapterId, mode = 'only') {
+  if (!chapterId) return null
+
+  saving.value = true
+  saveType.value = mode
+
+  try {
+    const reviewRaw = reviewText.value || ''
+    const { data } = await chaptersApi.update(chapterId, {
+      title: editTitle.value,
+      content: editContent.value,
+      trigger_extraction: false,
+      review_raw: reviewRaw
+    })
+
+    await loadChapters()
+    return data
+  } finally {
+    saving.value = false
+    saveType.value = null
+  }
+}
+
 // 从大纲中查找章节标题
 function findChapterTitleFromOutline(chapterId) {
   for (const vol of volumeTree.value) {
@@ -230,153 +332,44 @@ function findChapterTitleFromOutline(chapterId) {
 }
 
 function selectChapter(chapter) {
-  if (aiWriting.value || aiPolishing.value) return
+  if (aiWriting.value || aiPolishing.value || aiRevising.value) return
   router.push(`/workspace/write/${chapter.id}`)
 }
 
 async function saveOnly() {
   if (!currentChapter.value) return
-  saving.value = true
-  saveType.value = 'only'
   message.value = ''
   try {
-    const reviewRaw = reviewText.value || ''
-    const { data } = await chaptersApi.update(currentChapter.value.id, {
-      title: editTitle.value,
-      content: editContent.value,
-      trigger_extraction: false,
-      review_raw: reviewRaw
-    })
+    const data = await persistChapter(currentChapter.value.id, 'only')
     if (data.post_save_sync_blocked) {
       message.value = `✓ 已保存（已阻断索引/摘要同步：${data.post_save_sync_block_reason || '审查未通过'}）`
     } else {
       message.value = '✓ 已保存'
     }
     setTimeout(() => { if (message.value.startsWith('✓ 已保存')) message.value = '' }, 2200)
-
-    // 刷新章节列表状态
-    await loadChapters()
   } catch (e) {
     message.value = '✗ 保存失败'
     console.error(e)
-  } finally {
-    saving.value = false
-    saveType.value = null
   }
 }
 
 // 提取世界观预览
 async function handleExtractPreview() {
-  if (!currentChapter.value || extracting.value) return
-
-  extracting.value = true
-  popupMessage.value = 'AI 正在分析设定数据...'
-  popupType.value = 'info'
-  showPopup.value = true
+  if (!currentChapter.value || settingSyncStore.isRunning) return
 
   try {
-    const { data } = await chaptersApi.extractPreview(currentChapter.value.id, editContent.value)
-    if (data.success && data.task_id) {
-      // 轮询等待提取完成
-      const startTime = Date.now()
-      const TIMEOUT_MS = 300 * 1000
-      let interval = 1000
-
-      const pollTask = async () => {
-        if (Date.now() - startTime > TIMEOUT_MS) {
-          popupMessage.value = '提取超时，请重试'
-          popupType.value = 'warning'
-          setTimeout(() => { showPopup.value = false }, 3000)
-          extracting.value = false
-          return
-        }
-
-        try {
-          const { data: status } = await chaptersApi.getTaskStatus(data.task_id)
-
-          if (status.status === 'completed') {
-            chaptersApi.ackTask(data.task_id).catch(() => {})
-            showPopup.value = false
-            extracting.value = false
-            if (status.result) {
-              extractionResult.value = status.result
-              showExtractionPreview.value = true
-            } else {
-              popupMessage.value = '本章未提取到新设定'
-              popupType.value = 'info'
-              showPopup.value = true
-              setTimeout(() => { showPopup.value = false }, 2500)
-            }
-          } else if (status.status === 'error') {
-            chaptersApi.ackTask(data.task_id).catch(() => {})
-            popupMessage.value = '提取失败: ' + status.message
-            popupType.value = 'warning'
-            setTimeout(() => { showPopup.value = false }, 3000)
-            extracting.value = false
-          } else if (status.status === 'running') {
-            popupMessage.value = status.message || 'AI 正在分析设定数据...'
-            if (interval < 5000) interval += 500
-            setTimeout(pollTask, interval)
-          } else {
-            showPopup.value = false
-            extracting.value = false
-          }
-        } catch (e) {
-          console.error('Poll extract preview failed:', e)
-          setTimeout(pollTask, 5000)
-        }
-      }
-
-      setTimeout(pollTask, 1000)
-    }
+    await settingSyncStore.startSync(currentChapter.value.id, editContent.value)
   } catch (e) {
-    popupMessage.value = '启动同步失败: ' + (e.response?.data?.detail || e.message)
-    popupType.value = 'warning'
-    setTimeout(() => { showPopup.value = false }, 3000)
-    extracting.value = false
+    console.error('启动设定同步失败:', e)
   }
-}
-
-async function handleExtractionConfirm(filtered) {
-  if (!currentChapter.value) return
-  applyingExtraction.value = true
-  try {
-    const { data } = await chaptersApi.extractApply(currentChapter.value.id, filtered, editContent.value)
-    showExtractionPreview.value = false
-    extractionResult.value = null
-    popupMessage.value = `✓ 设定同步完成（新增 ${data.created_files || 0} 文件，更新 ${data.updated_entities || 0} 实体）`
-    popupType.value = 'success'
-    showPopup.value = true
-    setTimeout(() => { showPopup.value = false }, 3000)
-  } catch (e) {
-    popupMessage.value = '写入失败: ' + (e.response?.data?.detail || e.message)
-    popupType.value = 'warning'
-    showPopup.value = true
-    setTimeout(() => { showPopup.value = false }, 3000)
-  } finally {
-    applyingExtraction.value = false
-  }
-}
-
-function handleExtractionCancel() {
-  showExtractionPreview.value = false
-  extractionResult.value = null
 }
 
 
 async function saveAndNext() {
   if (!currentChapter.value) return
-  saving.value = true
-  saveType.value = 'next'
   message.value = ''
   try {
-    const reviewRaw = reviewText.value || ''
-    const { data } = await chaptersApi.update(currentChapter.value.id, {
-      title: editTitle.value,
-      content: editContent.value,
-      trigger_extraction: false,
-      review_raw: reviewRaw
-    })
+    const data = await persistChapter(currentChapter.value.id, 'next')
     if (data.post_save_sync_blocked) {
       message.value = `⚠️ 已保存，但已阻断索引/摘要同步：${data.post_save_sync_block_reason || '审查未通过'}`
     }
@@ -406,9 +399,6 @@ async function saveAndNext() {
     router.push(`/workspace/write/${nextId}`)
   } catch (e) {
     message.value = '✗ 保存失败：' + e.message
-  } finally {
-    saving.value = false
-    saveType.value = null
   }
 }
 
@@ -437,8 +427,9 @@ function createNewChapter() {
   const nextId = chapters.value.length > 0 
     ? Math.max(...chapters.value.map(c => c.id)) + 1 
     : 1
-  currentChapter.value = { id: nextId, title: '', content: '' }
-  editTitle.value = ''
+  const outlineTitle = findChapterTitleFromOutline(nextId)
+  currentChapter.value = { id: nextId, title: outlineTitle || '', content: '' }
+  editTitle.value = outlineTitle || ''
   editContent.value = ''
   reviewResult.value = null
 }
@@ -519,8 +510,7 @@ async function aiWriteChapter() {
             fullContent = data.content
             editContent.value = fullContent
           }
-          aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成（未保存）`)
-          message.value = `✓ 第 ${targetChapterId} 章已生成并完成审查，请确认后手动保存`
+          message.value = `✓ 第 ${targetChapterId} 章已生成，正在检查是否需要自动修订`
         }
       }
     }
@@ -545,6 +535,48 @@ async function aiWriteChapter() {
     if (!streamCompleted) {
       aiTaskStore.failTask('写作流异常终止')
       message.value = '⚠️ AI 写作流异常终止，内容可能不完整'
+    } else {
+      let stoppedWithBlockingIssues = false
+      if (reviewResult.value && hasBlockingReviewIssues(reviewText.value || '')) {
+        aiTaskStore.updateStep({ step: 'post-review-fix', name: '根据审查自动修订', status: 'active' })
+        message.value = '审查发现问题，开始自动修订...'
+        const fixResult = await runTargetedRevisionLoop({
+          targetChapterId,
+          aiTaskStore,
+          startNewTask: false,
+          taskName: 'AI 写作',
+          initialContent: fullContent,
+          initialReviewText: reviewText.value || ''
+        })
+        fullContent = fixResult.lastStableContent
+        stoppedWithBlockingIssues = fixResult.stoppedWithBlockingIssues
+        aiTaskStore.updateStep({
+          step: 'post-review-fix',
+          name: '根据审查自动修订',
+          status: stoppedWithBlockingIssues ? 'failed' : 'completed'
+        })
+      }
+
+      try {
+        const saveResult = await persistChapter(targetChapterId, 'auto')
+        if (stoppedWithBlockingIssues) {
+          aiTaskStore.completeTask(false, `第 ${targetChapterId} 章已生成并自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，仍有待处理问题`)
+          if (saveResult?.post_save_sync_blocked) {
+            message.value = `⚠️ 第 ${targetChapterId} 章已生成并自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
+          } else {
+            message.value = `⚠️ 第 ${targetChapterId} 章已生成并自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，但仍有问题，请人工确认`
+          }
+        } else if (saveResult?.post_save_sync_blocked) {
+          aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成并自动保存（索引同步已阻断）`)
+          message.value = `✓ 第 ${targetChapterId} 章已生成并自动保存（已阻断索引/摘要同步：${saveResult.post_save_sync_block_reason || '审查未通过'}）`
+        } else {
+          aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成并自动保存`)
+          message.value = `✓ 第 ${targetChapterId} 章已生成并自动保存`
+        }
+      } catch (saveError) {
+        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成，但自动保存失败`)
+        message.value = '⚠️ AI 写作完成，但自动保存失败：' + saveError.message
+      }
     }
   } catch (e) {
     aiTaskStore.failTask(e.message)
@@ -563,13 +595,291 @@ async function aiReviewChapter() {
     const { data } = await aiApi.reviewChapter(currentChapter.value.id, editContent.value)
     if (data.success) {
       reviewResult.value = data
+      return data
     }
+    return data
   } catch (e) {
     console.error('Review error:', e)
     message.value = '✗ 审查失败：' + (e.response?.data?.detail || e.message)
+    throw e
   } finally {
     aiReviewing.value = false
   }
+}
+
+async function runTargetedRevisionLoop({
+  targetChapterId,
+  aiTaskStore,
+  startNewTask = false,
+  taskName = '按审查修订',
+  initialContent = editContent.value,
+  initialReviewText = reviewText.value || ''
+}) {
+  let lastStableContent = initialContent
+  let latestReviewText = initialReviewText
+  let stoppedWithBlockingIssues = false
+
+  if (startNewTask) {
+    aiTaskStore.startTask(taskName, `第 ${targetChapterId} 章`)
+  } else {
+    aiTaskStore.updateTaskDetail('进入按审查修订')
+  }
+
+  aiRevising.value = true
+  message.value = 'AI 正在根据审查意见修订...'
+
+  try {
+    for (let round = 1; round <= MAX_AUTO_REVIEW_FIX_ROUNDS; round += 1) {
+      const reviseStepId = `revise-round-${round}`
+      const reviewStepId = `review-round-${round}`
+      aiTaskStore.updateStep({ step: reviseStepId, name: `第 ${round} 轮修订`, status: 'active' })
+      aiTaskStore.updateTaskDetail(`第 ${round} 轮修订`)
+      message.value = `第 ${round} 轮按审查修订中...`
+
+      const response = await aiApi.polishChapterStream(
+        targetChapterId,
+        lastStableContent,
+        latestReviewText,
+        'targeted_fix'
+      )
+      if (!response.ok) {
+        const raw = await response.text()
+        throw new Error(`修订请求失败（${response.status}）：${raw}`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let revisedContent = ''
+      let buffer = ''
+      let streamCompleted = false
+
+      const processRevisionSseParts = async (parts) => {
+        for (const part of parts) {
+          const line = part.trim()
+          if (!line || !line.startsWith('data: ')) continue
+          const data = JSON.parse(line.substring(6))
+
+          if (data.type === 'error') {
+            if (data.level === 'warning') {
+              message.value = `⚠️ ${data.message || '后台步骤告警'}`
+              continue
+            }
+            throw new Error(data.message)
+          } else if (data.type === 'content') {
+            if (data.replace && typeof data.full === 'string') {
+              revisedContent = data.full
+            } else if (typeof data.full === 'string' && !data.chunk) {
+              revisedContent = data.full
+            } else {
+              revisedContent += (data.chunk || '')
+            }
+            editContent.value = revisedContent
+          } else if (data.type === 'step') {
+            const detail = `第 ${round} 轮 · ${data.name || 'AI 正在修订'}`
+            aiTaskStore.updateTaskDetail(detail)
+            message.value = detail
+          } else if (data.type === 'done') {
+            streamCompleted = true
+            if (typeof data.content === 'string' && data.content.trim()) {
+              revisedContent = data.content
+              editContent.value = revisedContent
+            }
+          }
+        }
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          buffer += decoder.decode()
+          const tailParts = buffer.split('\n\n')
+          buffer = ''
+          await processRevisionSseParts(tailParts)
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop()
+        await processRevisionSseParts(parts)
+      }
+
+      if (!streamCompleted) {
+        throw new Error('修订流异常终止')
+      }
+      if (!revisedContent.trim()) {
+        throw new Error('AI 未返回修订后的正文')
+      }
+
+      aiTaskStore.updateStep({ step: reviseStepId, name: `第 ${round} 轮修订`, status: 'completed' })
+      lastStableContent = revisedContent
+      editContent.value = revisedContent
+
+      aiTaskStore.updateStep({ step: reviewStepId, name: `第 ${round} 轮复审`, status: 'active' })
+      aiTaskStore.updateTaskDetail(`第 ${round} 轮复审`)
+      message.value = `第 ${round} 轮修订完成，正在复审...`
+      const reviewData = await aiReviewChapter()
+      aiTaskStore.updateStep({ step: reviewStepId, name: `第 ${round} 轮复审`, status: 'completed' })
+      latestReviewText = reviewData?.raw_review || reviewText.value || ''
+
+      if (!hasBlockingReviewIssues(latestReviewText)) {
+        break
+      }
+
+      if (round === MAX_AUTO_REVIEW_FIX_ROUNDS) {
+        stoppedWithBlockingIssues = true
+        message.value = `⚠️ 已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，仍有问题，请人工确认`
+      }
+    }
+    return { lastStableContent, latestReviewText, stoppedWithBlockingIssues }
+  } catch (e) {
+    aiTaskStore.updateStep({ step: `error-${Date.now()}`, name: e.message || '修订失败', status: 'failed' })
+    message.value = '✗ 按审查修订失败：' + (e.response?.data?.detail || e.message)
+    editContent.value = lastStableContent
+    throw e
+  } finally {
+    aiRevising.value = false
+  }
+}
+
+async function aiReviseByReview() {
+  if (!currentChapter.value || !reviewResult.value) return
+
+  const aiTaskStore = useAiTaskStore()
+  const targetChapterId = currentChapter.value.id
+
+  try {
+    const { stoppedWithBlockingIssues } = await runTargetedRevisionLoop({
+      targetChapterId,
+      aiTaskStore,
+      startNewTask: true,
+      taskName: '按审查修订'
+    })
+
+    try {
+      const saveResult = await persistChapter(targetChapterId, 'auto')
+      if (stoppedWithBlockingIssues) {
+        aiTaskStore.completeTask(false, `第 ${targetChapterId} 章已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，仍有待处理问题`)
+        if (saveResult?.post_save_sync_blocked) {
+          message.value = `⚠️ 已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮并保存当前结果，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
+        } else {
+          message.value = `⚠️ 已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮并保存当前结果，但仍有问题，请人工确认`
+        }
+      } else if (saveResult?.post_save_sync_blocked) {
+        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已修订并复审（索引同步已阻断）`)
+        message.value = `✓ 按审查修订并复审完成（已阻断索引/摘要同步：${saveResult.post_save_sync_block_reason || '审查未通过'}）`
+      } else {
+        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已修订并复审`)
+        message.value = '✓ 按审查修订并复审完成'
+      }
+    } catch (saveError) {
+      aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已修订并复审，但自动保存失败`)
+      message.value = '⚠️ 修订与复审完成，但自动保存失败：' + saveError.message
+    }
+  } catch (e) {
+    aiTaskStore.failTask(e.message)
+  }
+}
+
+function chapterExistsInOutline(chapterId) {
+  return volumeTree.value.some(vol => vol.children?.some(c => c.chapter === chapterId))
+}
+
+async function startAutoBatch() {
+  showAutoBatchDialog.value = false
+  if (!currentChapter.value) return
+
+  const totalChapters = autoBatchTotal.value
+  autoBatchRunning.value = true
+  autoBatchCurrent.value = 0
+
+  const aiTaskStore = useAiTaskStore()
+
+  try {
+    for (let i = 0; i < totalChapters; i++) {
+      if (!autoBatchRunning.value) {
+        message.value = `自动连写已手动停止（完成 ${i}/${totalChapters} 章）`
+        break
+      }
+
+      const chapterId = currentChapter.value.id
+      autoBatchCurrent.value = i + 1
+
+      // 检查当前章节是否在大纲中
+      if (!chapterExistsInOutline(chapterId)) {
+        message.value = `自动连写停止：第 ${chapterId} 章不在大纲中（完成 ${i}/${totalChapters} 章）`
+        break
+      }
+
+      // 如果当前章节已有内容（字数>100），跳过写作直接下一章
+      if (editContent.value && editContent.value.length > 100) {
+        message.value = `第 ${chapterId} 章已有内容，跳过`
+        if (i < totalChapters - 1) {
+          await navigateToNextChapter(chapterId, { ensureFile: false })
+          continue
+        }
+        break
+      }
+
+      // 调用现有的 aiWriteChapter（含生成+审查+自动修订+保存）
+      await aiWriteChapter()
+
+      // 检查是否因大问题停止
+      if (reviewResult.value && hasBlockingReviewIssues(reviewText.value || '')) {
+        message.value = `自动连写停止：第 ${chapterId} 章有未解决的严重问题，请人工处理（完成 ${i}/${totalChapters} 章）`
+        break
+      }
+
+      // 设定同步：等待完成后再进入下一章，避免后续章节被跳过
+      if (editContent.value?.trim()) {
+        try {
+          await settingSyncStore.startSyncAndWait(chapterId, editContent.value)
+        } catch (e) {
+          message.value = `自动连写停止：第 ${chapterId} 章设定同步失败，请人工处理（完成 ${i + 1}/${totalChapters} 章）`
+          break
+        }
+      }
+
+      // 如果还需要继续，导航到下一章
+      if (i < totalChapters - 1) {
+        const nextId = chapterId + 1
+        if (!chapterExistsInOutline(nextId)) {
+          message.value = `自动连写完成：已无更多大纲章节（完成 ${i + 1}/${totalChapters} 章）`
+          break
+        }
+        await navigateToNextChapter(chapterId, { ensureFile: false })
+      }
+    }
+
+    if (autoBatchRunning.value && autoBatchCurrent.value >= totalChapters) {
+      message.value = `自动连写完成！共完成 ${totalChapters} 章`
+    }
+  } catch (e) {
+    message.value = `自动连写出错：${e.message}（已完成 ${autoBatchCurrent.value - 1} 章）`
+  } finally {
+    autoBatchRunning.value = false
+    autoBatchCurrent.value = 0
+  }
+}
+
+async function navigateToNextChapter(currentId, options = {}) {
+  const nextId = currentId + 1
+  const ensureFile = options.ensureFile !== false
+
+  // 自动连写切章时无需预创建空文件，直接以草稿态载入下一章
+  const nextExists = chapters.value.some(c => c.id === nextId)
+  if (ensureFile && !nextExists) {
+    let nextTitle = findChapterTitleFromOutline(nextId) || `第${nextId}章`
+    await chaptersApi.update(nextId, { title: nextTitle, content: '', trigger_extraction: false })
+    await loadChapters()
+  }
+  // 直接加载下一章（不走路由watcher，因为aiWriting可能为true）
+  router.push(`/workspace/write/${nextId}`)
+  await loadChapter(nextId)
+}
+
+function stopAutoBatch() {
+  autoBatchRunning.value = false
 }
 
 function openPolishConfirm() {
@@ -589,6 +899,7 @@ async function handlePolishConfirm() {
 
   const hints = reviewText.value || ''
   const originalContent = editContent.value // Hold original content
+  const targetChapterId = currentChapter.value?.id
 
   // Clear editor to show typing effect
   editContent.value = ''
@@ -600,11 +911,16 @@ async function handlePolishConfirm() {
       originalContent,
       hints
     )
+    if (!response.ok) {
+      const raw = await response.text()
+      throw new Error(`润色请求失败（${response.status}）：${raw}`)
+    }
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
     let fullContent = ''
     let buffer = ''
+    let streamCompleted = false
 
     const processPolishSseParts = async (parts) => {
       for (const part of parts) {
@@ -627,9 +943,11 @@ async function handlePolishConfirm() {
         } else if (data.type === 'step') {
           message.value = data.name
         } else if (data.type === 'done') {
-          message.value = '✓ 润色完成，正在重新审查...'
-          await aiReviewChapter()
-          message.value = '✓ 润色与审查完成，请确认后手动保存'
+          streamCompleted = true
+          if (typeof data.content === 'string' && data.content.trim()) {
+            fullContent = data.content
+            editContent.value = fullContent
+          }
         }
       }
     }
@@ -650,12 +968,45 @@ async function handlePolishConfirm() {
       buffer = parts.pop()
       await processPolishSseParts(parts)
     }
+
+    if (!streamCompleted) {
+      throw new Error('润色流异常终止')
+    }
+    if (!fullContent.trim()) {
+      throw new Error('AI 未返回润色后的正文')
+    }
   } catch (e) {
     message.value = '✗ 润色失败：' + (e.response?.data?.detail || e.message)
     // If failed, restore original content
     if (!editContent.value) {
         editContent.value = originalContent
     }
+    return
+  }
+
+  try {
+    message.value = '润色完成，正在自动审查...'
+    const reviewData = await aiReviewChapter()
+    const latestReviewText = reviewData?.raw_review || reviewText.value || ''
+
+    try {
+      const saveResult = await persistChapter(targetChapterId, 'auto')
+      if (hasBlockingReviewIssues(latestReviewText)) {
+        if (saveResult?.post_save_sync_blocked) {
+          message.value = `⚠️ 润色完成并已自动审查，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
+        } else {
+          message.value = '⚠️ 润色完成并已自动审查，但仍有问题，请人工确认'
+        }
+      } else if (saveResult?.post_save_sync_blocked) {
+        message.value = `✓ 润色并自动审查完成（已阻断索引/摘要同步：${saveResult.post_save_sync_block_reason || '审查未通过'}）`
+      } else {
+        message.value = '✓ 润色并自动审查完成'
+      }
+    } catch (saveError) {
+      message.value = `⚠️ 润色与审查完成，但自动保存失败：${saveError.message}`
+    }
+  } catch (e) {
+    message.value = '⚠️ 润色完成，但自动审查失败：' + (e.response?.data?.detail || e.message)
   } finally {
     aiPolishing.value = false
   }
@@ -726,21 +1077,6 @@ const reviewText = computed({
       </div>
     </Transition>
 
-    <!-- 弹窗提示 -->
-    <Transition name="popup">
-      <div v-if="showPopup" class="popup-notification" :class="popupType">
-        <div class="popup-icon">
-          <svg v-if="popupType === 'info'" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
-        </div>
-        <div class="popup-content">
-          <div class="popup-title">后台任务进行中</div>
-          <div class="popup-message">{{ popupMessage }}</div>
-        </div>
-        <button class="popup-close" @click="showPopup = false">×</button>
-      </div>
-    </Transition>
     <!-- 左侧章节导航 -->
     <aside class="chapter-nav" :class="{ collapsed: !showSidebar }">
       <div class="nav-header">
@@ -831,11 +1167,25 @@ const reviewText = computed({
           <!-- 第一行：章节标题 + 字数 -->
           <div class="toolbar-row">
             <div class="toolbar-left">
-              <input
-                v-model="editTitle"
-                class="title-input"
-                placeholder="输入章节标题..."
-              />
+              <div class="title-field">
+                <span class="title-header">
+                  <span class="title-label">章节标题</span>
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    type="button"
+                    @click="copyTitle"
+                    :disabled="!editTitle?.trim()"
+                    title="复制标题"
+                  >
+                    {{ copyingTitle ? '复制中' : '复制标题' }}
+                  </button>
+                </span>
+                <input
+                  v-model="editTitle"
+                  class="title-input"
+                  placeholder="输入章节标题..."
+                />
+              </div>
             </div>
             <span class="word-count-badge">{{ wordCount.toLocaleString() }} 字</span>
           </div>
@@ -848,40 +1198,50 @@ const reviewText = computed({
             </div>
             <div class="toolbar-divider"></div>
             <div class="toolbar-group">
-              <button class="btn btn-secondary btn-sm" @click="copyContent" :disabled="!editContent" title="复制内容">
+              <button class="btn btn-secondary btn-sm" @click="copyContent" :disabled="!editContent" title="复制文章">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" /></svg>
-                {{ copying ? '复制中' : '复制' }}
+                {{ copying ? '复制中' : '复制文章' }}
               </button>
-              <button class="btn btn-secondary btn-sm" @click="aiReviewChapter" :disabled="aiReviewing">
+              <button class="btn btn-secondary btn-sm" @click="aiReviewChapter" :disabled="aiReviewing || aiWriting || aiPolishing || aiRevising">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
                 {{ aiReviewing ? '审查中' : '审查' }}
               </button>
-              <button class="btn btn-secondary btn-sm" @click="openPolishConfirm" :disabled="aiPolishing || !reviewResult" title="先审查，再润色">
+              <button class="btn btn-secondary btn-sm" @click="aiReviseByReview" :disabled="aiRevising || aiReviewing || aiWriting || aiPolishing || !reviewResult" title="仅按审查意见定点修订，并自动继续审查">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487 19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10m6.862-1.513a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
+                {{ aiRevising ? '修订中' : '按审查修订' }}
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="openPolishConfirm" :disabled="aiPolishing || aiReviewing || aiWriting || aiRevising || !reviewResult" title="先审查，再润色">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" /></svg>
                 {{ aiPolishing ? '润色中' : '润色' }}
               </button>
             </div>
             <div class="toolbar-divider"></div>
             <div class="toolbar-group">
-              <button class="btn btn-ai btn-sm" @click="aiWriteChapter" :disabled="aiWriting">
+              <button class="btn btn-ai btn-sm" @click="aiWriteChapter" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" /></svg>
                 {{ aiWriting ? '生成中' : '生成' }}
+              </button>
+              <button v-if="!autoBatchRunning" class="btn btn-ai btn-sm" @click="showAutoBatchDialog = true" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning" title="自动连续创作多章">
+                自动连写
+              </button>
+              <button v-else class="btn btn-danger btn-sm" @click="stopAutoBatch">
+                停止连写 ({{ autoBatchCurrent }}/{{ autoBatchTotal }})
               </button>
             </div>
             <div class="toolbar-divider"></div>
             <div class="toolbar-group">
-              <button class="btn btn-secondary btn-sm" @click="handleExtractPreview" :disabled="extracting || !editContent?.trim()" title="从章节内容同步设定数据">
+              <button class="btn btn-secondary btn-sm" @click="handleExtractPreview" :disabled="settingSyncStore.isRunning || !editContent?.trim()" title="自动后台同步设定数据">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
-                {{ extracting ? '同步中...' : '设定同步' }}
+                {{ settingSyncStore.isRunning ? '同步中...' : '设定同步' }}
               </button>
             </div>
             <div class="toolbar-divider"></div>
             <div class="toolbar-group toolbar-group-end">
-              <button class="btn btn-secondary btn-sm" @click="saveOnly" :disabled="saving" title="保存 (Ctrl+S)">
+              <button class="btn btn-secondary btn-sm" @click="saveOnly" :disabled="saving || aiWriting || aiReviewing || aiPolishing || aiRevising" title="保存 (Ctrl+S)">
                 <svg v-if="!(saving && saveType === 'only')" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3.25a3 3 0 0 0-3 3 .75.75 0 0 1-1.5 0 4.5 4.5 0 0 1 8 0 3 3 0 0 0 3-3 .75.75 0 0 1 1.5 0 4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1-.9.636l.9.636" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 7.5c0-1.657-1.343-3-3-3h-9c-1.657 0-3 1.343-3 3" /></svg>
                 {{ (saving && saveType === 'only') ? '保存中' : '保存' }}
               </button>
-              <button class="btn btn-primary btn-sm" @click="saveAndNext" :disabled="saving">
+              <button class="btn btn-primary btn-sm" @click="saveAndNext" :disabled="saving || aiWriting || aiReviewing || aiPolishing || aiRevising">
                 {{ (saving && saveType === 'next') ? '保存中...' : '下一章' }}
               </button>
             </div>
@@ -907,16 +1267,6 @@ const reviewText = computed({
           type="primary"
           @confirm="handlePolishConfirm"
           @cancel="showPolishDialog = false"
-        />
-
-        <!-- 提取预览弹窗 -->
-        <ExtractionPreviewDialog
-          :is-open="showExtractionPreview"
-          :chapter="currentChapter?.id || 0"
-          :extraction="extractionResult?.extraction"
-          :loading="applyingExtraction"
-          @confirm="handleExtractionConfirm"
-          @cancel="handleExtractionCancel"
         />
 
         <!-- 收尾规划弹窗 -->
@@ -1003,6 +1353,31 @@ const reviewText = computed({
       @confirm="handleDeleteConfirm"
       @cancel="showDeleteDialog = false"
     />
+
+    <!-- 自动连写配置弹窗 -->
+    <div v-if="showAutoBatchDialog" class="modal-overlay" @click.self="showAutoBatchDialog = false">
+      <div class="modal-content" style="max-width: 380px;">
+        <h3 class="modal-title">自动连写</h3>
+        <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+          从当前章节开始，自动完成「生成 → 审查 → 修订 → 保存 → 设定同步 → 下一章」的完整流程。
+        </p>
+        <div class="form-group" style="margin-bottom: 1.2rem;">
+          <label style="font-size: 0.85rem; color: var(--text-secondary);">连续创作章数</label>
+          <div class="range-wrapper">
+            <input type="range" v-model.number="autoBatchTotal" min="1" max="50" step="1" />
+            <input type="number" v-model.number="autoBatchTotal" min="1" max="50" step="1" style="width: 52px; text-align: center; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary, #1a1a2e); color: var(--text-primary);" />
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">章</span>
+          </div>
+        </div>
+        <p style="color: var(--text-tertiary, #888); font-size: 0.8rem; margin-bottom: 1rem;">
+          遇到严重问题（P0/P1）或无后续大纲时将自动停止。
+        </p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" @click="showAutoBatchDialog = false">取消</button>
+          <button class="btn btn-ai" @click="startAutoBatch">开始连写</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1439,6 +1814,28 @@ const reviewText = computed({
 .toolbar-left { flex: 1; min-width: 0; }
 .toolbar-right { display: flex; align-items: center; gap: 0.5rem; }
 
+.title-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  width: 100%;
+}
+
+.title-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.title-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9c958a;
+}
+
 .title-input {
   width: 100%;
   font-size: 1.375rem;
@@ -1672,26 +2069,27 @@ const reviewText = computed({
 /* ─── Status Toast ─── */
 .status-toast {
   position: fixed;
-  top: 1.25rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #3c3224;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  background: rgba(60, 50, 36, 0.78);
   color: white;
   padding: 0.5rem 1.25rem;
   border-radius: 10px;
   font-size: 0.8125rem;
   font-weight: 500;
   z-index: 200;
-  box-shadow: 0 8px 24px rgba(60, 50, 35, 0.2);
+  box-shadow: 0 10px 28px rgba(60, 50, 35, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   pointer-events: none;
   letter-spacing: 0.01em;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(14px) saturate(1.08);
+  max-width: min(380px, calc(100vw - 2.5rem));
 }
 .status-toast.success {
-  background: linear-gradient(135deg, #065f46, #059669);
+  background: linear-gradient(135deg, rgba(6, 95, 70, 0.82), rgba(5, 150, 105, 0.76));
 }
 .status-toast.error {
-  background: linear-gradient(135deg, #991b1b, #dc2626);
+  background: linear-gradient(135deg, rgba(153, 27, 27, 0.84), rgba(220, 38, 38, 0.78));
 }
 
 /* ─── Empty State ─── */
@@ -1974,12 +2372,12 @@ const reviewText = computed({
 
 .toast-enter-from {
   opacity: 0;
-  transform: translateX(-50%) translateY(-16px) scale(0.95);
+  transform: translateY(10px) scale(0.96);
 }
 
 .toast-leave-to {
   opacity: 0;
-  transform: translateX(-50%) translateY(-12px);
+  transform: translateY(8px);
 }
 
 /* ─── Responsive ─── */

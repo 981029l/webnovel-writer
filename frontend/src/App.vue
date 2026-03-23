@@ -5,6 +5,6 @@ import AiStatusBar from './components/AiStatusBar.vue'
 </script>
 
 <template>
-  <!-- <AiStatusBar /> -->
+  <AiStatusBar />
   <RouterView />
 </template>

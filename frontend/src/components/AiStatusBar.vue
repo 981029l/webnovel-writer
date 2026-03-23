@@ -1,15 +1,31 @@
 <!-- Copyright (c) 2026 左岚. All rights reserved. -->
 <!-- AiStatusBar.vue - 全局 AI 任务进度状态条 -->
 <template>
-  <transition name="slide-down">
-    <div v-if="isVisible" class="ai-status-bar" :class="statusClass">
+  <transition name="popup-fade">
+    <div v-if="isVisible" class="task-popup" :class="statusClass">
       <div class="status-content">
         <span class="status-icon" v-html="statusIcon"></span>
-        <span class="status-text">{{ aiTask.statusText }}</span>
-        <span v-if="aiTask.isRunning && formattedTime" class="elapsed-time">{{ formattedTime }}</span>
+        <div class="status-copy">
+          <div class="status-text">{{ aiTask.statusText }}</div>
+          <div v-if="aiTask.isRunning && formattedTime" class="elapsed-time">已运行 {{ formattedTime }}</div>
+          <div v-if="visibleSteps.length" class="status-steps">
+            <div
+              v-for="step in visibleSteps"
+              :key="step.step"
+              class="status-step"
+              :class="step.status || 'pending'"
+            >
+              <span class="step-dot"></span>
+              <span class="step-name">{{ step.name || step.step }}</span>
+              <span class="step-state" :class="step.status || 'pending'">
+                {{ getStepStatusLabel(step.status) }}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="status-actions">
-        <button v-if="aiTask.result" class="btn-view" @click="goToResult">查看</button>
+        <button v-if="aiTask.result?.path" class="btn-view" @click="goToResult">查看</button>
         <button class="btn-close" @click="dismiss">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="size-4">
             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -21,7 +37,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAiTaskStore } from '@/stores/aiTask'
 
@@ -30,12 +46,21 @@ const aiTask = useAiTaskStore()
 
 const timer = ref(null)
 const now = ref(Date.now())
+const dismissTimer = ref(null)
+
+function clearDismissTimer() {
+  if (dismissTimer.value) {
+    clearTimeout(dismissTimer.value)
+    dismissTimer.value = null
+  }
+}
 
 onMounted(() => {
   timer.value = setInterval(() => { now.value = Date.now() }, 1000)
 })
 onUnmounted(() => {
   if (timer.value) clearInterval(timer.value)
+  clearDismissTimer()
 })
 
 const isVisible = computed(() => aiTask.isRunning || aiTask.result)
@@ -56,6 +81,18 @@ const statusClass = computed(() => {
   return 'error'
 })
 
+const visibleSteps = computed(() => {
+  const steps = Array.isArray(aiTask.initSteps) ? aiTask.initSteps : []
+  return steps.slice(-5)
+})
+
+function getStepStatusLabel(status) {
+  if (status === 'active' || status === 'processing') return '进行中'
+  if (status === 'completed' || status === 'success') return '已完成'
+  if (status === 'failed' || status === 'error') return '失败'
+  return '等待中'
+}
+
 const formattedTime = computed(() => {
   if (!aiTask.startTime) return ''
   const seconds = Math.floor((now.value - aiTask.startTime) / 1000)
@@ -66,7 +103,7 @@ const formattedTime = computed(() => {
 
 function goToResult() {
   if (aiTask.result?.path) {
-    router.push('/workspace/write')
+    router.push(aiTask.result.path)
   }
   dismiss()
 }
@@ -74,51 +111,66 @@ function goToResult() {
 function dismiss() {
   aiTask.clearTask()
 }
+
+watch(() => aiTask.result, (result) => {
+  clearDismissTimer()
+  if (!result) return
+  dismissTimer.value = setTimeout(() => {
+    if (aiTask.result === result) {
+      dismiss()
+    }
+  }, 4000)
+}, { deep: true })
 </script>
 
 <style scoped>
-.ai-status-bar {
+.task-popup {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  right: 20px;
+  bottom: 20px;
   z-index: 9999;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  padding: 10px 20px;
+  gap: 14px;
+  width: min(420px, calc(100vw - 24px));
+  padding: 14px 16px;
+  border-radius: 14px;
   font-size: 14px;
   font-weight: 500;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  backdrop-filter: blur(16px) saturate(1.15);
 }
 
-.ai-status-bar.running {
-  background: white;
-  border-bottom: 2px solid var(--primary, #8b7355);
+.task-popup.running {
+  background: rgba(255, 255, 255, 0.82);
   color: var(--text-primary, #2c2825);
 }
 
-.ai-status-bar.success {
-  background: white;
-  border-bottom: 2px solid var(--cta, #10b981);
-  color: var(--text-primary, #2c2825);
+.task-popup.success {
+  background: rgba(236, 253, 245, 0.82);
+  color: #065f46;
+  border-color: rgba(16, 185, 129, 0.22);
 }
 
-.ai-status-bar.error {
-  background: white;
-  border-bottom: 2px solid var(--danger, #ef4444);
-  color: var(--text-primary, #2c2825);
+.task-popup.error {
+  background: rgba(254, 242, 242, 0.84);
+  color: #991b1b;
+  border-color: rgba(239, 68, 68, 0.22);
 }
 
 .status-content {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
+  min-width: 0;
 }
 
 .status-icon {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .status-icon :deep(.status-svg) {
@@ -136,17 +188,104 @@ function dismiss() {
 
 .status-text {
   font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .elapsed-time {
-  opacity: 0.6;
+  opacity: 0.72;
   font-size: 12px;
+  margin-top: 2px;
+}
+
+.status-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.status-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+}
+
+.status-step {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(51, 65, 85, 0.78);
+}
+
+.status-step .step-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.5);
+  flex-shrink: 0;
+}
+
+.status-step.active .step-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+}
+
+.status-step.active .step-name {
+  color: #1f2937;
+  font-weight: 700;
+}
+
+.status-step.completed .step-dot {
+  background: #10b981;
+}
+
+.status-step.failed .step-dot,
+.status-step.error .step-dot {
+  background: #ef4444;
+}
+
+.step-name {
+  min-width: 0;
+  flex: 1;
+  word-break: break-word;
+}
+
+.step-state {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(71, 85, 105, 0.9);
+}
+
+.step-state.active,
+.step-state.processing {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.step-state.completed,
+.step-state.success {
+  background: rgba(16, 185, 129, 0.14);
+  color: #047857;
+}
+
+.step-state.failed,
+.step-state.error {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
 }
 
 .status-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .btn-view, .btn-close {
@@ -172,11 +311,20 @@ function dismiss() {
 }
 
 /* 动画 */
-.slide-down-enter-active, .slide-down-leave-active {
-  transition: all 0.3s ease;
+.popup-fade-enter-active, .popup-fade-leave-active {
+  transition: all 0.22s ease;
 }
-.slide-down-enter-from, .slide-down-leave-to {
-  transform: translateY(-100%);
+.popup-fade-enter-from, .popup-fade-leave-to {
+  transform: translateY(10px) scale(0.98);
   opacity: 0;
+}
+
+@media (max-width: 640px) {
+  .task-popup {
+    right: 12px;
+    bottom: 12px;
+    width: min(360px, calc(100vw - 24px));
+    padding: 12px 14px;
+  }
 }
 </style>

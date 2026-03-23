@@ -110,7 +110,7 @@ class SkillExecutor:
             return "反派角色"
         if "major" in imp or "主要" in imp:
             return "主要角色"
-        if any(k in identity_l for k in ["敌", "反派", "邪", "仇", "刺客"]):
+        if any(k in identity_l for k in ["敌", "反派", "邪", "仇", "刺客", "魔", "对手", "boss", "幕后", "黑手"]):
             return "反派角色"
         if any(k in identity_l for k in ["主角", "妻", "父", "母", "兄", "姐", "弟", "妹", "核心"]):
             return "主要角色"
@@ -1115,7 +1115,7 @@ class SkillExecutor:
             return raw, {"original": raw_len, "final": raw_len, "trimmed": 0}
         return clipped, {"original": raw_len, "final": final_len, "trimmed": int(final_len < raw_len)}
 
-    def _build_polish_prompt(self, chapter_id: int, content: str, suggestions: str) -> str:
+    def _build_polish_prompt(self, chapter_id: int, content: str, suggestions: str, mode: str = "rewrite") -> str:
         """构建润色 prompt（统一非流式与流式），并按预算压缩上下文。"""
         polish_budget = self._get_context_budgets("polish")
         genre = self._get_project_genre()
@@ -1157,6 +1157,42 @@ class SkillExecutor:
             keep_tail=True,
         )
         chapter_outline_for_prompt = self._truncate_text(chapter_outline, 1800, keep_tail=False)
+
+        if mode == "targeted_fix":
+            return f"""你是资深网文审校编辑。你的任务是根据【审查意见】对第{chapter_id}章进行**定点修订**，不是整章重写。
+
+【修订原则（必须严格遵守）】
+1. 只修改【审查意见】明确指出的问题，未命中的段落、台词、节奏和表达能不动就不动。
+2. 保留原有剧情顺序、段落结构、人物关系、情绪走向和有效爽点，禁止借机重写成另一个版本。
+3. 先修复设定冲突、角色/地点/术语错误、逻辑漏洞、连续性问题，再处理语句不顺或冗余。
+4. 如果审查意见中某条与大纲或正文上下文冲突，以大纲、设定和正文事实为准，不要机械硬改。
+5. 不得新增下一章剧情，不得擅自扩写，不得把局部修订演变成洗稿式重写。
+6. 即使只改少量位置，也必须返回**完整正文**，方便前端直接替换。
+7. 优先做“句内替换”和“局部短句增删”，不要整段改写；能改 1 句就不要改 1 段。
+8. 非必要禁止重排段落顺序，禁止整体换文风，禁止把原文 50% 以上内容改成新写法。
+9. 若审查意见主要是术语、设定、角色称谓、地点、时间线错误，应只修正对应词句，不要顺手润色整章。
+
+【当前题材】
+题材：{genre}
+子风格：{substyle or "（无）"}
+
+【本章大纲（防止修偏）】
+{chapter_outline_for_prompt if chapter_outline_for_prompt else "（无）"}
+
+【审查意见】
+{suggestions_for_prompt.strip() if suggestions_for_prompt.strip() else "（无）"}
+
+【排版要求】
+{typesetting if typesetting else "段落清晰，标点规范。"}
+
+【原文】
+{content_for_prompt}
+
+        【输出要求】
+1. 只输出修订后的完整正文，不要解释修改点，不要写“已根据意见修改”之类废话。
+2. 未命中的句段尽量保持原样，避免整章风格漂移。
+3. 你的目标不是“写得更华丽”，而是“在原文基础上修对问题”。
+4. 记录标签禁入正文：严禁输出【伤亡：...】、【消耗：...】、【状态：...】等记账型标签。"""
 
         # 主路径：从 slot 系统加载模板
         polish_template = self._load_project_prompt("polish")
@@ -1228,6 +1264,132 @@ class SkillExecutor:
 3. **严禁删减关键剧情**，但可以大幅度优化描写方式。
 4. 格式必须符合【排版要求】。
 5. **记录标签禁入正文**：严禁输出【伤亡：...】、【消耗：...】、【状态：...】等记账型标签。"""
+
+    def _build_targeted_fix_patch_prompt(self, chapter_id: int, content: str, suggestions: str) -> str:
+        """构建定点修补 prompt：要求模型返回局部替换补丁，而不是整章重写。"""
+        genre = self._get_project_genre()
+        substyle = self._get_project_substyle()
+        chapter_outline = self._truncate_text(self._find_chapter_outline(chapter_id), 1800, keep_tail=False)
+        typesetting = self._truncate_text(
+            self._load_reference("webnovel-write", "writing/typesetting.md"),
+            1200,
+            keep_tail=False,
+        )
+        content_for_prompt = self._truncate_text(content, 12000, keep_tail=True)
+        suggestions_for_prompt = self._truncate_text(suggestions, 2400, keep_tail=True)
+        return f"""你是资深小说审校编辑。你的任务不是重写第{chapter_id}章，而是基于【审查意见】对原文做**最小必要修改**。
+
+【核心原则】
+1. 只能做“定点修补”，禁止整章重写，禁止整体改文风。
+2. 优先修改术语、设定、人名、地点、时间线、逻辑错误；其次才是局部病句。
+3. 能改 1 句就不要改 1 段；能替换 10 个字就不要重写 100 个字。
+4. 未命中的句段必须保持原样。
+5. 每条补丁里的 original 必须是原文中连续出现、可以直接精确匹配的一段文本。
+6. original 应尽量唯一，建议 15-120 字；replacement 只做必要修正，不要扩写。
+7. 如果无需修改，返回空 edits。
+
+【当前题材】
+题材：{genre}
+子风格：{substyle or "（无）"}
+
+【本章大纲】
+{chapter_outline if chapter_outline else "（无）"}
+
+【审查意见】
+{suggestions_for_prompt if suggestions_for_prompt else "（无）"}
+
+【排版要求】
+{typesetting if typesetting else "段落清晰，标点规范。"}
+
+【原文】
+{content_for_prompt}
+
+请只输出合法 JSON 对象，不要输出 Markdown 代码块，不要解释：
+{{
+  "edits": [
+    {{
+      "original": "原文中需要替换的连续片段",
+      "replacement": "修正后的片段",
+      "reason": "简短说明"
+    }}
+  ]
+}}
+"""
+
+    def _extract_json_object_text(self, raw: str) -> str:
+        """从模型输出中提取 JSON 对象文本。"""
+        text = self._safe_text(raw).strip()
+        if not text:
+            return ""
+        if text.startswith("{") and text.endswith("}"):
+            return text
+
+        fence_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+        if fence_match:
+            return fence_match.group(1).strip()
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return text[start:end + 1].strip()
+        return text
+
+    def _apply_targeted_fix_edits(self, content: str, edits: List[Dict[str, Any]]) -> tuple[str, Dict[str, Any]]:
+        """按局部补丁替换原文，避免整章重写。"""
+        updated = self._safe_text(content)
+        applied: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+
+        for item in edits or []:
+            if not isinstance(item, dict):
+                continue
+            original = self._safe_text(item.get("original", ""))
+            replacement = self._safe_text(item.get("replacement", ""))
+            reason = self._safe_text(item.get("reason", "")).strip()
+
+            if not original.strip():
+                skipped.append({"reason": reason or "original 为空", "original": original[:80]})
+                continue
+            if original == replacement:
+                skipped.append({"reason": reason or "replacement 未变化", "original": original[:80]})
+                continue
+
+            occurrences = updated.count(original)
+            if occurrences != 1:
+                skipped.append({
+                    "reason": reason or f"original 匹配次数异常: {occurrences}",
+                    "original": original[:80],
+                    "occurrences": occurrences,
+                })
+                continue
+
+            updated = updated.replace(original, replacement, 1)
+            applied.append({
+                "reason": reason,
+                "original": original[:80],
+                "replacement": replacement[:80],
+            })
+
+        return updated, {"applied": applied, "skipped": skipped}
+
+    async def _run_targeted_fix_edit_pass(self, chapter_id: int, content: str, suggestions: str) -> tuple[str, Dict[str, Any]]:
+        """执行一次定点修补，返回修补后正文和补丁报告。"""
+        if not self.ai_service:
+            raise RuntimeError("AI Service not initialized")
+
+        prompt = self._build_targeted_fix_patch_prompt(chapter_id, content, suggestions)
+        raw = await self.ai_service.chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=4000,
+            response_format="json_object",
+        )
+        json_text = self._extract_json_object_text(raw)
+        data = json.loads(json_text) if json_text else {}
+        edits = data.get("edits", []) if isinstance(data, dict) else []
+        updated, report = self._apply_targeted_fix_edits(content, edits)
+        report["edit_count"] = len(edits) if isinstance(edits, list) else 0
+        return updated, report
 
     def _merge_extraction_payload(self, acc: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
         """合并分块抽取结果，做去重与字段补全。"""
@@ -3093,6 +3255,12 @@ class SkillExecutor:
 
             (self.project_root / "大纲" / "总纲.md").write_text(full_content, encoding="utf-8")
             self._clear_outline_invalidation_state()
+
+            # 从大纲中提取主角名，确保主角档案和 state.json 同步
+            protagonist_name = self._resolve_protagonist_name()
+            if protagonist_name:
+                self._sync_protagonist_profile(protagonist_name)
+
             yield make_event("step", name="AI 规划总纲", status="completed")
             yield make_event("done", success=True, message="总纲规划完成")
 
@@ -3379,6 +3547,10 @@ class SkillExecutor:
             yield make_event("step", name="创建角色档案", status="processing")
             try:
                 await self._create_character_files_from_outline(volume, full_content)
+                # 确保主角档案存在于角色库和活跃角色表
+                protagonist_name = self._resolve_protagonist_name()
+                if protagonist_name:
+                    self._sync_protagonist_profile(protagonist_name)
                 yield make_event("step", name="创建角色档案", status="completed")
             except Exception as e:
                 print(f"[角色系统] 创建角色档案失败: {e}")
@@ -3677,13 +3849,32 @@ class SkillExecutor:
                     full_content = done_content
         return {"success": success, "content": full_content, "steps": []}
 
-    async def execute_polish(self, chapter_id: int, content: str, suggestions: str) -> Dict[str, Any]:
+    async def execute_polish(self, chapter_id: int, content: str, suggestions: str, mode: str = "rewrite") -> Dict[str, Any]:
         """执行润色工作流（由于历史原因保留，新版前端建议使用 _stream 版本）"""
         # 调用 AI 进行润色
         if not self.ai_service:
              return {"success": False, "error": "AI Service not initialized"}
 
-        prompt = self._build_polish_prompt(chapter_id, content, suggestions)
+        if mode == "targeted_fix":
+             try:
+                 polished_content, patch_report = await self._run_targeted_fix_edit_pass(chapter_id, content, suggestions)
+                 polished_content, sanitize_report = self._sanitize_reader_facing_content(polished_content)
+                 removed_count = int(sanitize_report.get("removed_lines", 0)) + int(sanitize_report.get("removed_inline_tags", 0))
+                 if removed_count > 0:
+                     self._debug(f"[TARGETED-FIX SANITIZE] 清理记录标签 {removed_count} 处")
+                 return {
+                     "success": True,
+                     "content": polished_content,
+                     "tail_fix_applied": False,
+                     "patch_report": patch_report,
+                 }
+             except Exception as e:
+                 self._debug(f"[DEBUG] execute_polish(targeted_fix): 异常={str(e)}")
+                 return {"success": False, "error": str(e)}
+
+        prompt = self._build_polish_prompt(chapter_id, content, suggestions, mode=mode)
+        if not self._safe_text(prompt).strip():
+             return {"success": False, "error": f"Polish prompt is empty for mode={mode}"}
         self._debug(f"[DEBUG] execute_polish: 输入内容长度={len(content)}, suggestions={suggestions[:100] if suggestions else '(空)'}")
         
         try:
@@ -3729,7 +3920,7 @@ class SkillExecutor:
              self._debug(f"[DEBUG] execute_polish: 异常={str(e)}")
              return {"success": False, "error": str(e)}
 
-    async def execute_polish_stream(self, chapter_id: int, content: str, suggestions: str):
+    async def execute_polish_stream(self, chapter_id: int, content: str, suggestions: str, mode: str = "rewrite"):
         """执行润色工作流（流式输出）。持久化副作用统一在手动保存后触发。"""
         def make_event(type, **kwargs):
             return json.dumps({"type": type, **kwargs}, ensure_ascii=False)
@@ -3737,10 +3928,41 @@ class SkillExecutor:
         if not self.ai_service:
              yield make_event("error", message="AI Service not initialized")
              return
-        prompt = self._build_polish_prompt(chapter_id, content, suggestions)
+
+        if mode == "targeted_fix":
+             try:
+                 yield make_event("step", name="分析审查问题", status="processing")
+                 await asyncio.sleep(0)
+                 yield make_event("step", name="分析审查问题", status="completed")
+
+                 yield make_event("step", name="生成局部修订补丁", status="processing")
+                 full_content, patch_report = await self._run_targeted_fix_edit_pass(chapter_id, content, suggestions)
+                 yield make_event("step", name="生成局部修订补丁", status="completed")
+
+                 yield make_event("step", name="应用原文补丁", status="processing")
+                 full_content, sanitize_report = self._sanitize_reader_facing_content(full_content)
+                 removed_count = int(sanitize_report.get("removed_lines", 0)) + int(sanitize_report.get("removed_inline_tags", 0))
+                 if removed_count > 0:
+                     self._debug(f"[TARGETED-FIX SANITIZE] 清理记录标签 {removed_count} 处")
+                 yield make_event("content", chunk="", full=full_content, replace=True)
+                 yield make_event(
+                     "step",
+                     name=f"应用原文补丁（命中 {len((patch_report or {}).get('applied', []))} 处）",
+                     status="completed",
+                 )
+                 yield make_event("done", content=full_content, patch_report=patch_report)
+             except Exception as e:
+                 yield make_event("error", message=str(e))
+             return
+
+        prompt = self._build_polish_prompt(chapter_id, content, suggestions, mode=mode)
+        if not self._safe_text(prompt).strip():
+             yield make_event("error", message=f"Polish prompt is empty for mode={mode}")
+             return
 
         try:
-             yield make_event("step", name="AI 正在思考润色方案...", status="processing")
+             step_name = "AI 正在思考修订方案..." if mode == "targeted_fix" else "AI 正在思考润色方案..."
+             yield make_event("step", name=step_name, status="processing")
 
              # 调用 AI 进行流式润色
              full_content = ""
@@ -3761,7 +3983,7 @@ class SkillExecutor:
              removed_count = int(sanitize_report.get("removed_lines", 0)) + int(sanitize_report.get("removed_inline_tags", 0))
              if removed_count > 0:
                  self._debug(f"[POLISH-SANITIZE DEBUG] 清理记录标签 {removed_count} 处")
-             yield make_event("step", name="AI 正在思考润色方案...", status="completed")
+             yield make_event("step", name=step_name, status="completed")
 
              genre = self._get_project_genre()
              chapter_outline = self._find_chapter_outline(chapter_id)
@@ -6256,11 +6478,193 @@ class SkillExecutor:
                 except Exception as e:
                     print(f"[状态系统] 更新失败: {e}")
             
+            # ── 同步 state.json：protagonist_state + relationships + progress ──
+            try:
+                self._sync_state_from_extraction(chapter, new_chars, status_changes, exits)
+            except Exception as e:
+                print(f"[状态系统] 同步 state.json 失败: {e}")
+
         except Exception as e:
             print(f"[角色系统] 应用提取结果失败: {e}")
             return {"created_files": created_files, "updated_entities": updated_entities, "roster_updated": False}
 
         return {"created_files": created_files, "updated_entities": updated_entities, "roster_updated": roster_updated}
+
+    def _resolve_protagonist_name(self) -> str:
+        """从多个来源尝试解析主角名：state.json → 主角卡 → 大纲。"""
+        # 1) state.json
+        state = self._load_state()
+        if state:
+            name = self._safe_text(state.get("protagonist_state", {}).get("name", "")).strip()
+            if name:
+                return name
+
+        # 2) 主角卡
+        card_file = self.project_root / "设定集" / "主角卡.md"
+        if card_file.exists():
+            card_text = card_file.read_text(encoding="utf-8")
+            name = self._extract_protagonist_name_from_card(card_text)
+            if name:
+                return name
+
+        # 3) 大纲（匹配 **主角**：XXX 或 - **主角**：XXX）
+        outline_dir = self.project_root / "大纲"
+        if outline_dir.exists():
+            for f in sorted(outline_dir.glob("*.md")):
+                text = f.read_text(encoding="utf-8")
+                m = re.search(r"\*?\*?主角\*?\*?[：:]\s*([^\s,，｜|（(]+)", text)
+                if m:
+                    name = self._normalize_entity_name(m.group(1))
+                    if name and "待填写" not in name:
+                        return name
+        return ""
+
+    def _sync_state_from_extraction(self, chapter: int, new_chars: list, status_changes: list, exits: list) -> None:
+        """将提取结果同步到 state.json 的 protagonist_state、relationships、progress。"""
+        protagonist_name = self._resolve_protagonist_name()
+
+        def _updater(state: Dict[str, Any]) -> None:
+            from datetime import datetime
+
+            # ── 1. protagonist_state ──
+            pstate = state.setdefault("protagonist_state", {})
+            # 如果主角名还没写入，补上
+            if not pstate.get("name") and protagonist_name:
+                pstate["name"] = protagonist_name
+
+            cur_protagonist = pstate.get("name", "")
+
+            # 从 status_changes 更新主角状态
+            for sc in status_changes:
+                sc_name = self._normalize_entity_name(sc.get("name", ""))
+                if sc_name and sc_name == cur_protagonist:
+                    if sc.get("realm"):
+                        pstate.setdefault("power", {})["realm"] = sc["realm"]
+                    if sc.get("location"):
+                        pstate.setdefault("location", {})["current"] = sc["location"]
+                        pstate["location"]["last_chapter"] = chapter
+
+            # 从 new_characters 也补充主角状态（有时主角出现在 status_changes 而非 new_chars）
+            for char in new_chars:
+                cname = self._normalize_entity_name(char.get("name", ""))
+                if cname and cname == cur_protagonist:
+                    if char.get("realm") and not pstate.get("power", {}).get("realm"):
+                        pstate.setdefault("power", {})["realm"] = char["realm"]
+                    if char.get("location") and not pstate.get("location", {}).get("current"):
+                        pstate.setdefault("location", {})["current"] = char["location"]
+                        pstate["location"]["last_chapter"] = chapter
+
+            # ── 2. relationships ──
+            rels = state.setdefault("relationships", {})
+
+            for char in new_chars:
+                cname = self._normalize_entity_name(char.get("name", ""))
+                relation = self._safe_text(char.get("relation", "")).strip()
+                if not cname or cname == cur_protagonist:
+                    continue
+                if not relation or relation == "待补充":
+                    continue
+                # 新角色直接写入；已有角色只更新变化的字段
+                existing = rels.get(cname, {})
+                rels[cname] = {
+                    "relation": relation,
+                    "status": existing.get("status", "存活"),
+                    "realm": char.get("realm", "") or existing.get("realm", ""),
+                    "first_chapter": existing.get("first_chapter", chapter),
+                    "last_chapter": chapter,
+                }
+
+            for sc in status_changes:
+                sc_name = self._normalize_entity_name(sc.get("name", ""))
+                if not sc_name or sc_name == cur_protagonist:
+                    continue
+                if sc_name in rels:
+                    if sc.get("realm"):
+                        rels[sc_name]["realm"] = sc["realm"]
+                    if sc.get("status"):
+                        rels[sc_name]["status"] = sc["status"]
+                    rels[sc_name]["last_chapter"] = chapter
+
+            for ex in exits:
+                ex_name = self._normalize_entity_name(ex.get("name", ""))
+                if ex_name and ex_name in rels:
+                    rels[ex_name]["status"] = f"下线: {self._safe_text(ex.get('reason', ''))}"
+                    rels[ex_name]["last_chapter"] = chapter
+
+            # ── 3. progress ──
+            prog = state.setdefault("progress", {})
+            if chapter > prog.get("current_chapter", 0):
+                prog["current_chapter"] = chapter
+            prog["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        self._update_state(_updater)
+
+        # ── 确保主角档案存在 ──
+        if protagonist_name:
+            self._ensure_protagonist_profile(protagonist_name, chapter, status_changes)
+
+        print(f"[状态系统] state.json 已同步（第{chapter}章提取结果）")
+
+    def _ensure_protagonist_profile(self, name: str, chapter: int, status_changes: list) -> None:
+        """如果主角档案不存在，自动创建。"""
+        existing = self._find_character_file_by_name(name)
+        if existing:
+            return
+
+        char_lib = self.project_root / "设定集" / "角色库"
+        main_dir = char_lib / "主要角色"
+        main_dir.mkdir(parents=True, exist_ok=True)
+
+        # 从大纲中尝试获取更多主角信息
+        realm = ""
+        identity = "主角"
+        for sc in status_changes:
+            if self._normalize_entity_name(sc.get("name", "")) == name:
+                realm = sc.get("realm", "") or realm
+
+        # 尝试从大纲提取境界和身份
+        outline_dir = self.project_root / "大纲"
+        if outline_dir.exists():
+            for f in sorted(outline_dir.glob("*.md")):
+                text = f.read_text(encoding="utf-8")
+                # 匹配初始境界
+                m = re.search(r"初始境界[：:]\s*\*?\*?([^*\n]+)", text)
+                if m and not realm:
+                    realm = m.group(1).strip()
+                # 匹配身份
+                m = re.search(r"身份[：:]\s*([^\n]+)", text)
+                if m:
+                    identity = m.group(1).strip()
+                if realm:
+                    break
+
+        profile_path = main_dir / f"{name}.md"
+        profile_path.write_text(f"""# {name}
+
+## 基本信息
+- **身份**：{identity}
+- **首次出场**：第1章
+- **当前境界**：{realm or '未知'}
+- **当前状态**：存活
+- **当前地点**：未知
+- **最后更新章节**：第{chapter}章
+
+## 与主角关系
+主角本人
+
+## 外貌描写
+待补充（从正文中提取）
+
+## 性格特点
+待补充
+
+## 关键事件时间线
+- 第1章：初次登场
+
+---
+*档案创建于第{chapter}章设定同步后*
+""", encoding="utf-8")
+        print(f"[角色系统] 自动创建主角档案: 主要角色/{name}.md")
 
     async def _update_character_state(self, chapter: int, content: str) -> None:
         """分析章节内容，自动更新活跃角色表 + 创建新角色档案（向后兼容包装）"""
@@ -6412,7 +6816,7 @@ class SkillExecutor:
 ```json
 {{
   "characters": [
-    {{"name": "角色名", "identity": "身份", "first_chapter": 123, "relation": "与主角关系", "description": "描述"}}
+    {{"name": "角色名", "identity": "身份", "importance": "major/minor/villain", "first_chapter": 123, "relation": "与主角关系", "description": "描述"}}
   ],
   "treasures": [
     {{"name": "宝物名", "tier": "品级", "effect": "效果", "owner": "持有者"}}
@@ -6478,7 +6882,8 @@ class SkillExecutor:
                         char["name"] = existing_char_file.stem
                         continue
                     identity = self._safe_text(char.get("identity", ""))
-                    char_dir = char_lib / self._infer_character_category(identity=identity)
+                    importance = self._safe_text(char.get("importance", ""))
+                    char_dir = char_lib / self._infer_character_category(importance=importance, identity=identity)
                     
                     char_file = char_dir / f"{name}.md"
                     if char_file.exists():

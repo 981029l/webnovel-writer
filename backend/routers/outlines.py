@@ -329,12 +329,16 @@ async def delete_volume_outline(
 
     deleted_character_files = []
     deleted_character_names = []
+    deleted_entity_files = []
     roster_updated = False
 
-    # 可选：删除该卷自动生成的角色档案（危险操作）
+    # 可选：删除该卷自动生成的角色及其他设定档案（危险操作）
     if delete_related_characters:
         marker = f"档案创建于第{volume}卷大纲生成时"
-        char_lib = root / "设定集" / "角色库"
+        settings_dir = root / "设定集"
+
+        # 扫描角色库
+        char_lib = settings_dir / "角色库"
         for category in ["主要角色", "次要角色", "反派角色"]:
             cat_dir = char_lib / category
             if not cat_dir.exists():
@@ -347,6 +351,20 @@ async def delete_volume_outline(
                 if marker in content:
                     deleted_character_files.append(str(f.relative_to(root)))
                     deleted_character_names.append(f.stem)
+                    f.unlink()
+
+        # 扫描宝物库、功法库、势力库、地点库
+        for lib_name in ["宝物库", "功法库", "势力库", "地点库"]:
+            lib_dir = settings_dir / lib_name
+            if not lib_dir.exists():
+                continue
+            for f in sorted(lib_dir.glob("*.md")):
+                try:
+                    content = f.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+                if marker in content:
+                    deleted_entity_files.append(str(f.relative_to(root)))
                     f.unlink()
 
         # 从活跃角色表中移除被删除角色
@@ -371,7 +389,8 @@ async def delete_volume_outline(
     if logger:
         extra = ""
         if delete_related_characters:
-            extra = f"（联动删除角色 {len(deleted_character_files)} 个）"
+            total = len(deleted_character_files) + len(deleted_entity_files)
+            extra = f"（联动删除设定档案 {total} 个）"
         logger.log(
             type="outline",
             action="deleted",
@@ -384,5 +403,7 @@ async def delete_volume_outline(
         "deleted_character_count": len(deleted_character_files),
         "deleted_character_names": sorted(set(deleted_character_names)),
         "deleted_character_files": deleted_character_files,
+        "deleted_entity_count": len(deleted_entity_files),
+        "deleted_entity_files": deleted_entity_files,
         "roster_updated": roster_updated
     }

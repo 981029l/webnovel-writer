@@ -5,7 +5,7 @@ import json
 import sys
 import re
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Union
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -259,7 +259,8 @@ async def write_chapter_stream_api(request: WriteRequest, root: Path = Depends(g
 class PolishRequest(BaseModel):
     chapter_id: int
     content: str
-    suggestions: list[str] | str  # Support both list and string
+    suggestions: Union[List[str], str]  # Support both list and string
+    mode: str = "rewrite"
 
 
 @router.post("/polish")
@@ -276,7 +277,8 @@ async def polish_chapter_api(request: PolishRequest, root: Path = Depends(get_pr
         result = await executor.execute_polish(
             chapter_id=request.chapter_id,
             content=request.content,
-            suggestions=suggestions_str
+            suggestions=suggestions_str,
+            mode=request.mode,
         )
         if not result["success"]:
             raise HTTPException(status_code=500, detail=result.get("error", "Polish failed"))
@@ -300,7 +302,8 @@ async def polish_chapter_stream_api(request: PolishRequest, root: Path = Depends
              async for update in executor.execute_polish_stream(
                 chapter_id=request.chapter_id,
                 content=request.content,
-                suggestions=suggestions_str
+                suggestions=suggestions_str,
+                mode=request.mode,
              ):
                 # 兼容两种返回：JSON 字符串（新版）或 dict（旧版）
                 if isinstance(update, str):

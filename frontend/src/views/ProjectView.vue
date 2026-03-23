@@ -8,6 +8,7 @@ import { useAiTaskStore } from '../stores/aiTask'
 import { aiApi, projectsApi, ragApi } from '../api'
 import SearchSelect from '../components/SearchSelect.vue'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { copyText } from '../utils/clipboard'
 
 const router = useRouter()
 const projectStore = useProjectStore()
@@ -369,7 +370,7 @@ async function generateSynopsisAI() {
 async function copyDescription() {
   if (!projectStore.description) return
   try {
-    await navigator.clipboard.writeText(projectStore.description)
+    await copyText(projectStore.description)
     showMessage('✓ 已复制')
   } catch (err) { showMessage('✗ 复制失败') }
 }

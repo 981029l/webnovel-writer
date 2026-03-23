@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 scripts_path = Path(__file__).parent.parent / ".claude" / "scripts"
 sys.path.insert(0, str(scripts_path))
 
-from routers import projects, outlines, chapters, entities, rag, ai, characters
+from routers import projects, outlines, chapters, entities, rag, ai, characters, fanqie
 
 app = FastAPI(
     title="Webnovel Writer API",
@@ -36,6 +36,7 @@ app.include_router(entities.router, prefix="/api/entities", tags=["实体管理"
 app.include_router(rag.router, prefix="/api/rag", tags=["RAG检索"])
 app.include_router(ai.router, prefix="/api/ai", tags=["AI写作"])
 app.include_router(characters.router)
+app.include_router(fanqie.router, prefix="/api/fanqie", tags=["番茄自动上传"])
 
 
 @app.get("/")
