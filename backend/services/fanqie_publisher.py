@@ -24,10 +24,15 @@ _pw_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="playwright"
 # 全局浏览器实例
 _playwright_instance = None
 _browser_instance = None
+_browser_lock = __import__('threading').Lock()
 
 # 登录会话（登录成功后保持，直到手动关闭）
 _login_context = None
 _login_page = None
+
+# 跟踪所有活跃的浏览器上下文（用于调试/强制关闭）
+_active_contexts = []  # [(name, context)]
+_contexts_lock = __import__('threading').Lock()
 
 
 def _cleanup():
@@ -68,20 +73,69 @@ def check_environment() -> dict:
 def _ensure_playwright():
     """确保浏览器实例"""
     global _playwright_instance, _browser_instance
-    if _browser_instance is None:
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            raise RuntimeError("未安装 playwright 库。请执行: pip install playwright && playwright install chromium")
-        _playwright_instance = sync_playwright().start()
-        try:
-            _browser_instance = _playwright_instance.chromium.launch(headless=True)
-        except Exception as e:
-            err = str(e)
-            if "shared libraries" in err:
-                raise RuntimeError("Chromium 缺少系统依赖。请执行: playwright install-deps chromium")
-            raise RuntimeError(f"Chromium 启动失败: {err}\n请执行: playwright install chromium")
+    with _browser_lock:
+        if _browser_instance is None:
+            try:
+                from playwright.sync_api import sync_playwright
+            except ImportError:
+                raise RuntimeError("未安装 playwright 库。请执行: pip install playwright && playwright install chromium")
+            _playwright_instance = sync_playwright().start()
+            try:
+                _browser_instance = _playwright_instance.chromium.launch(headless=True)
+            except Exception as e:
+                err = str(e)
+                if "shared libraries" in err:
+                    raise RuntimeError("Chromium 缺少系统依赖。请执行: playwright install-deps chromium")
+                raise RuntimeError(f"Chromium 启动失败: {err}\n请执行: playwright install chromium")
     return _browser_instance
+
+
+def _track_context(name: str, context):
+    """注册活跃上下文"""
+    with _contexts_lock:
+        _active_contexts.append((name, context))
+
+
+def _untrack_context(context):
+    """移除已关闭的上下文"""
+    with _contexts_lock:
+        _active_contexts[:] = [(n, c) for n, c in _active_contexts if c is not context]
+
+
+def get_browser_sessions() -> list:
+    """返回当前活跃的浏览器会话列表"""
+    with _contexts_lock:
+        sessions = [{"name": n} for n, c in _active_contexts]
+    # 加上登录会话
+    if _login_context is not None:
+        has_login = any(n == "login" for n, _ in _active_contexts)
+        if not has_login:
+            sessions.append({"name": "login"})
+    return sessions
+
+
+def close_all_browsers() -> dict:
+    """关闭所有活跃的浏览器上下文"""
+    global _login_context, _login_page
+    closed = 0
+    # 关闭登录会话
+    if _login_context is not None:
+        _close_login_browser_internal()
+        _login_state["active"] = False
+        _login_state["status"] = "idle"
+        _login_state["message"] = ""
+        _login_state["screenshot"] = ""
+        closed += 1
+    # 关闭其他活跃上下文
+    with _contexts_lock:
+        for name, ctx in _active_contexts:
+            try:
+                ctx.close()
+                closed += 1
+            except Exception:
+                pass
+        _active_contexts.clear()
+    return {"closed": closed}
 
 
 # ─────────── 多账号管理 ───────────
@@ -237,6 +291,7 @@ def _login_worker(account_name: str):
         browser = _ensure_playwright()
         _login_state["message"] = "正在打开番茄登录页面..."
         _login_context = browser.new_context()
+        _track_context("login", _login_context)
         _login_page = _login_context.new_page()
 
         _login_page.goto(LOGIN_URL, timeout=60000)
@@ -301,7 +356,9 @@ def _close_login_browser_internal():
     except Exception:
         pass
     try:
-        if _login_context: _login_context.close()
+        if _login_context:
+            _untrack_context(_login_context)
+            _login_context.close()
     except Exception:
         pass
     _login_page = None
@@ -313,8 +370,16 @@ def start_login_background(account_name: str = "默认账号"):
     # 如果有残留的浏览器会话，先自动关闭
     if _login_state["browser_open"] and not _login_state["active"]:
         _close_login_browser_internal()
+    # 强制重置卡死的登录状态（超过5分钟视为卡死）
     if _login_state["active"]:
-        return {"ok": False, "message": "登录进程正在运行，请稍候"}
+        import threading
+        # 检查执行器中是否真有线程在跑
+        alive = any(t.is_alive() for t in threading.enumerate() if t.name.startswith("playwright"))
+        if not alive:
+            _login_state["active"] = False
+            _close_login_browser_internal()
+        else:
+            return {"ok": False, "message": "登录进程正在运行，请稍候"}
     _pw_executor.submit(_login_worker, account_name)
     return {"ok": True, "message": "登录进程已启动"}
 
@@ -351,6 +416,119 @@ def check_login_status() -> dict:
     return {"accounts": accounts}
 
 
+def _verify_account_sync(account_name: str) -> dict:
+    """通过读取 cookie 过期时间快速验证账号有效性（不启动浏览器）"""
+    state_file = _account_file(account_name)
+    if not state_file.exists():
+        return {"name": account_name, "valid": False, "reason": "账号文件不存在"}
+
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        cookies = data.get("cookies", [])
+        if not cookies:
+            return {"name": account_name, "valid": False, "reason": "无 cookie 数据"}
+
+        # 检查关键 cookie 是否存在且未过期
+        now = time.time()
+        key_cookies = [c for c in cookies if c.get("domain", "").endswith("fanqienovel.com")]
+        if not key_cookies:
+            return {"name": account_name, "valid": False, "reason": "无番茄域名 cookie"}
+
+        # 检查 sessionid 等关键登录 cookie
+        session_cookies = [c for c in key_cookies if c.get("name", "") in ("sessionid", "sessionid_ss", "sid_guard", "sid_tt")]
+        if not session_cookies:
+            # 也接受有 cookie 但没有明确 session 的情况（可能用了其他认证方式）
+            session_cookies = key_cookies
+
+        expired = []
+        for c in session_cookies:
+            exp = c.get("expires", -1)
+            if exp > 0 and exp < now:
+                expired.append(c.get("name", ""))
+
+        if expired:
+            return {"name": account_name, "valid": False, "reason": f"cookie 已过期: {', '.join(expired[:3])}"}
+
+        # cookie 文件修改时间
+        mtime = state_file.stat().st_mtime
+        age_days = (now - mtime) / 86400
+        if age_days > 30:
+            return {"name": account_name, "valid": False, "reason": f"登录已超过 {int(age_days)} 天，建议重新登录"}
+
+        return {"name": account_name, "valid": True, "reason": ""}
+    except Exception as e:
+        return {"name": account_name, "valid": False, "reason": f"读取失败: {str(e)[:80]}"}
+
+
+async def verify_account(account_name: str) -> dict:
+    """验证单个账号 cookie 有效性（纯文件检查，不启动浏览器，不阻塞）"""
+    return _verify_account_sync(account_name)
+
+
+async def verify_all_accounts() -> list:
+    """逐个验证所有账号（共用单线程执行器，顺序执行）"""
+    accounts = list_accounts()
+    results = []
+    for acc in accounts:
+        r = await verify_account(acc["name"])
+        results.append(r)
+    return results
+
+
+def _debug_screenshot_sync(account_name: str) -> dict:
+    """截图番茄后台并保存HTML结构"""
+    state_file = _account_file(account_name)
+    if not state_file.exists():
+        return {"ok": False, "message": "账号不存在"}
+    browser = _ensure_playwright()
+    context = browser.new_context(storage_state=str(state_file))
+    _track_context(f"debug:{account_name}", context)
+    page = context.new_page()
+    try:
+        page.goto(BOOK_MANAGE_URL, timeout=30000)
+        time.sleep(4)
+        debug_dir = ACCOUNTS_DIR / "debug"
+        debug_dir.mkdir(exist_ok=True)
+        page.screenshot(path=str(debug_dir / f"page_{account_name}.png"), full_page=True)
+        # 保存页面文本结构
+        text = page.evaluate('() => document.body.innerText')
+        (debug_dir / f"text_{account_name}.txt").write_text(text, encoding="utf-8")
+        # 保存所有"章节管理"链接的上下文
+        info = page.evaluate('''() => {
+            const results = [];
+            const all = document.querySelectorAll('*');
+            for (const el of all) {
+                if (el.textContent.trim() === '章节管理' && el.children.length === 0) {
+                    let ctx = [];
+                    let p = el;
+                    for (let i = 0; i < 6 && p; i++) {
+                        ctx.push({tag: p.tagName, class: p.className, text: p.textContent.trim().substring(0, 100)});
+                        p = p.parentElement;
+                    }
+                    results.push(ctx);
+                }
+            }
+            return results;
+        }''')
+        (debug_dir / f"links_{account_name}.json").write_text(
+            json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "message": f"截图已保存到 {debug_dir}", "url": page.url}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+    finally:
+        try:
+            page.close()
+            context.close()
+        except Exception:
+            pass
+        _untrack_context(context)
+
+
+async def debug_screenshot(account_name: str) -> dict:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(_pw_executor, _debug_screenshot_sync, account_name)
+
+
 def logout(account_name: str):
     return delete_account(account_name)
 
@@ -364,52 +542,41 @@ def _list_books_sync(account_name: str) -> list:
 
     browser = _ensure_playwright()
     context = browser.new_context(storage_state=str(state_file))
+    _track_context(f"books:{account_name}", context)
     page = context.new_page()
     books = []
 
     try:
-        page.goto(BOOK_MANAGE_URL, timeout=60000)
+        page.goto(BOOK_MANAGE_URL, timeout=30000)
         time.sleep(4)
 
         if "login" in page.url.lower() or "enter_from" in page.url:
-            return []
+            raise RuntimeError(f"账号 [{account_name}] 登录已失效，请重新登录")
 
-        # 用 JS 在页面中提取书名：以"最近更新"为锚点，向上找书名
+        # 用 JS 从 info-content 卡片提取书名
         books = page.evaluate('''() => {
-            const text = document.body.innerText;
-            const lines = text.split('\\n').map(l => l.trim()).filter(l => l);
+            const cards = document.querySelectorAll('.info-content');
             const result = [];
-            const seen = new Set();
-            const noise = new Set([
-                '番茄小说网','作家课堂','作品管理','征文活动','征文作品',
-                '作品推荐','创建章节','创建作品','作品可搜','作品小贴士',
-                '章节管理','数据中心','创建新书','草稿箱','作家专区',
-                '工作台','我的小说','作品相关','创作中心','消息','帮助',
-                '收入','活动','签约','设置','退出','首页',
-                '推荐评估','点此了解','刷新','全选','发起推荐'
-            ]);
-            const noiseRe = [
-                /^最近更新/, /^\\d+\\s*章$/, /万字/, /连载|完结|签约/,
-                /^第\\d+章/, /推荐|评估|小贴士|创建|管理|课堂|征文/,
-                /^\\d+(\\.\\d+)?\\s*万/, /章节/, /作品/, /更新/
-            ];
-            for (let i = 0; i < lines.length; i++) {
-                if (/^最近更新/.test(lines[i])) {
-                    for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
-                        const line = lines[j];
-                        if (line.length >= 2 && line.length <= 30
-                            && !seen.has(line) && !noise.has(line)
-                            && !noiseRe.some(r => r.test(line))) {
-                            seen.add(line);
-                            result.push({name: line});
-                            break;
-                        }
-                    }
+            for (const card of cards) {
+                const text = (card.innerText || card.textContent || '').trim();
+                if (!text) continue;
+                // 书名是第一行文本，取第一个换行前的内容
+                // 如果没换行，取到"征文作品"或"最近更新"之前的内容
+                let name = text.split('\\n')[0].trim();
+                // 如果整段没换行，用关键词截断
+                for (const kw of ['征文作品', '最近更新', '连载', '完结']) {
+                    const idx = name.indexOf(kw);
+                    if (idx > 0) { name = name.substring(0, idx).trim(); break; }
+                }
+                if (name.length >= 2 && name.length <= 50) {
+                    result.push({name: name});
                 }
             }
             return result;
         }''')
 
+    except RuntimeError:
+        raise
     except Exception:
         pass
     finally:
@@ -418,6 +585,7 @@ def _list_books_sync(account_name: str) -> list:
             context.close()
         except Exception:
             pass
+        _untrack_context(context)
 
     return books or []
 
@@ -439,6 +607,7 @@ def _sync_chapters_sync(account_name: str, book_name: str, project_root: str) ->
     root = Path(project_root)
     browser = _ensure_playwright()
     context = browser.new_context(storage_state=str(state_file))
+    _track_context(f"sync:{account_name}", context)
     page = context.new_page()
 
     try:
@@ -503,6 +672,7 @@ def _sync_chapters_sync(account_name: str, book_name: str, project_root: str) ->
             context.close()
         except Exception:
             pass
+        _untrack_context(context)
 
 
 async def sync_chapters(account_name: str, book_name: str, project_root: str) -> dict:
@@ -547,7 +717,7 @@ def _check_publish_error(page) -> str:
                     line = line.strip()
                     if kw in line and len(line) < 100:
                         return line
-                return f"检测到限制提示（含"{kw}"）"
+                return f"检测到限制提示（含'{kw}'）"
     except Exception:
         pass
     return ""
@@ -559,29 +729,90 @@ def _publish_single_chapter(page, context, book_name, chapter_num, chapter_title
         page.goto(BOOK_MANAGE_URL, timeout=60000)
         page.wait_for_timeout(3000)
 
-        book_container = page.locator('div, li, section').filter(
-            has_text=book_name).filter(has=page.locator('text="章节管理"')).last
+        # 先清除可能的弹窗/遮罩
+        for _ in range(3):
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+        # 关闭 info-content 类弹窗
+        try:
+            for close_sel in ['.info-content .close', '.info-content button', '.modal-close', '[class*="close"]']:
+                close_btn = page.locator(close_sel).first
+                if close_btn.is_visible(timeout=500):
+                    close_btn.click(force=True)
+                    page.wait_for_timeout(300)
+        except Exception:
+            pass
 
-        if book_container.is_visible():
-            book_container.get_by_text("章节管理").first.click()
-        else:
-            page.get_by_text("章节管理").first.click()
+        # 精确匹配书名：每本书在 div.info-content 容器内
+        clicked = page.evaluate('''(bookName) => {
+            const cards = document.querySelectorAll('.info-content');
+            for (const card of cards) {
+                const text = card.innerText || card.textContent || '';
+                // 检查卡片文本是否包含书名
+                if (text.includes(bookName)) {
+                    const links = card.querySelectorAll('a, button');
+                    for (const link of links) {
+                        if (link.textContent.trim() === '章节管理') {
+                            link.click();
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }''', book_name)
+        if not clicked:
+            raise Exception(f"未找到书籍「{book_name}」的章节管理入口")
 
         page.wait_for_timeout(4000)
         original_pages = len(context.pages)
-        editor_page = context.pages[-1] if original_pages > 1 and context.pages[-1] != page else page
+        # 章节管理可能打开新标签页
+        if len(context.pages) > 1:
+            editor_page = context.pages[-1]
+        else:
+            editor_page = page
+
+        # 清弹窗/遮罩（章节管理页也可能有）
+        for _ in range(3):
+            editor_page.keyboard.press("Escape")
+            editor_page.wait_for_timeout(300)
+        try:
+            for close_sel in ['.info-content .close', '.info-content button', '.modal-close', '[class*="close"]']:
+                close_btn = editor_page.locator(close_sel).first
+                if close_btn.is_visible(timeout=300):
+                    close_btn.click(force=True)
+                    editor_page.wait_for_timeout(300)
+        except Exception:
+            pass
 
         # 检查草稿
         draft_row = editor_page.locator('tr, li, .chapter-item').filter(
             has_text=re.compile(f"第\\s*{chapter_num}\\s*章")).first
-        if draft_row.is_visible():
+        if draft_row.is_visible(timeout=3000):
             edit_icon = draft_row.locator('td').last.locator('svg, i, a, span, button, img').first
-            if edit_icon.is_visible(): edit_icon.click()
-            else: draft_row.click()
+            if edit_icon.is_visible(): edit_icon.click(force=True)
+            else: draft_row.click(force=True)
         else:
-            new_btn = editor_page.get_by_role("button", name="新建章节").first
-            if not new_btn.is_visible(): new_btn = editor_page.get_by_text("新建章节").first
-            new_btn.click()
+            # 尝试多种方式找"新建章节"按钮
+            new_btn = None
+            for selector in [
+                lambda: editor_page.get_by_role("button", name="新建章节").first,
+                lambda: editor_page.get_by_text("新建章节").first,
+                lambda: editor_page.get_by_text("创建章节").first,
+                lambda: editor_page.get_by_role("button", name="创建章节").first,
+                lambda: editor_page.locator('button:has-text("新建"), a:has-text("新建")').first,
+            ]:
+                try:
+                    btn = selector()
+                    if btn.is_visible(timeout=2000):
+                        new_btn = btn
+                        break
+                except Exception:
+                    continue
+            if new_btn:
+                new_btn.click(force=True)
+            else:
+                raise Exception("未找到'新建章节'按钮，番茄页面可能已更新或登录已失效")
 
         page.wait_for_timeout(4000)
         if len(context.pages) > original_pages:
@@ -678,6 +909,14 @@ def _publish_single_chapter(page, context, book_name, chapter_num, chapter_title
             except Exception: pass
         return result
     except Exception as e:
+        # 保存失败截图用于调试
+        try:
+            debug_dir = ACCOUNTS_DIR / "debug"
+            debug_dir.mkdir(exist_ok=True)
+            active_page = editor_page if 'editor_page' in dir() else page
+            active_page.screenshot(path=str(debug_dir / f"fail_{chapter_num}.png"))
+        except Exception:
+            pass
         return {"success": False, "message": str(e)}
 
 
@@ -707,8 +946,16 @@ def _publish_chapters_sync(project_root, book_name, account_name, chapter_ids):
 
     sorted_ids = sorted(chapter_files.keys())
     total = len(sorted_ids)
+
+    # 发布前先验证账号有效性
+    check = _verify_account_sync(account_name)
+    if not check["valid"]:
+        _publish_state.update({"active": False, "status": "error", "message": f"账号 [{account_name}] {check['reason']}，请重新登录后再发布"})
+        return
+
     browser = _ensure_playwright()
     context = browser.new_context(storage_state=str(state_file))
+    _track_context(f"publish:{account_name}", context)
     page = context.new_page()
     success_count = 0
     fail_count = 0
@@ -748,6 +995,7 @@ def _publish_chapters_sync(project_root, book_name, account_name, chapter_ids):
     finally:
         try: page.close(); context.close()
         except Exception: pass
+        _untrack_context(context)
         _publish_state.update({
             "active": False, "status": "done",
             "success_count": success_count, "fail_count": fail_count,

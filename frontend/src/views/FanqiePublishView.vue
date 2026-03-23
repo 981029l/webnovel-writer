@@ -10,6 +10,8 @@ const envFixCommands = ref([])
 
 // ─── 多账号 ───
 const accounts = ref([])
+const accountValidity = ref({})  // { accountName: { valid: bool, reason: string } }
+const verifying = ref(false)
 const newAccountName = ref('')
 const showAddAccount = ref(false)
 
@@ -67,7 +69,8 @@ async function fetchStatus() {
     selectedAccount.value = data.account_name || (accounts.value[0]?.name || '')
     if (hasAnyAccount.value) {
       await fetchChapters()
-      fetchBooks()
+      // 自动验证账号有效性（不阻塞，纯cookie检查很快）
+      verifyAllAccounts()
     }
   } catch (e) {
     console.error('获取状态失败:', e)
@@ -81,7 +84,11 @@ async function fetchBooks() {
     const { data } = await fanqieApi.getBooks(selectedAccount.value)
     books.value = data.books || []
   } catch (e) {
-    console.error('获取书籍列表失败:', e)
+    const detail = e.response?.data?.detail || ''
+    if (detail.includes('失效')) {
+      accountValidity.value = { ...accountValidity.value, [selectedAccount.value]: { valid: false, reason: '登录已失效' } }
+    }
+    console.error('获取书籍列表失败:', detail || e.message)
     books.value = []
   }
   booksLoading.value = false
@@ -141,6 +148,22 @@ async function closeLoginBrowser() {
   loginMessage.value = ''
 }
 
+async function closeAllBrowsers() {
+  try {
+    const { data } = await fanqieApi.closeAllBrowsers()
+    loginBrowserOpen.value = false
+    loginScreenshot.value = ''
+    loginMessage.value = ''
+    loginLoading.value = false
+    stopLoginPoll()
+    if (data.closed > 0) {
+      console.log(`已关闭 ${data.closed} 个浏览器会话`)
+    }
+  } catch (e) {
+    console.error('关闭浏览器失败:', e)
+  }
+}
+
 async function doLogout(accountName) {
   stopLoginPoll()
   await fanqieApi.logout(accountName)
@@ -167,6 +190,42 @@ async function enterAccount(accountName) {
   await fanqieApi.updateConfig({ book_name: bookName.value || '', account_name: accountName })
   await fetchChapters()
   fetchBooks()
+}
+
+async function verifyAllAccounts() {
+  if (accounts.value.length === 0) return
+  verifying.value = true
+  try {
+    const { data } = await fanqieApi.verifyAccounts()
+    const map = {}
+    for (const r of data.results) {
+      map[r.name] = { valid: r.valid, reason: r.reason }
+    }
+    accountValidity.value = map
+  } catch (e) {
+    console.error('验证账号失败:', e)
+  }
+  verifying.value = false
+}
+
+async function verifySingleAccount(accountName) {
+  verifying.value = true
+  try {
+    const { data } = await fanqieApi.verifyAccounts(accountName)
+    if (data.results.length > 0) {
+      const r = data.results[0]
+      accountValidity.value = { ...accountValidity.value, [r.name]: { valid: r.valid, reason: r.reason } }
+    }
+  } catch (e) {
+    console.error('验证账号失败:', e)
+  }
+  verifying.value = false
+}
+
+function getAccountStatus(name) {
+  const v = accountValidity.value[name]
+  if (!v) return 'unknown'
+  return v.valid ? 'valid' : 'expired'
 }
 
 async function enterBook() {
@@ -253,8 +312,13 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
   <div class="fanqie-layout">
     <div class="fanqie-container">
       <header class="page-header">
-        <h1 class="page-title">番茄自动上传</h1>
-        <p class="page-subtitle">一键将章节发布到番茄小说平台</p>
+        <div class="page-header-top">
+          <div>
+            <h1 class="page-title">番茄自动上传</h1>
+            <p class="page-subtitle">一键将章节发布到番茄小说平台</p>
+          </div>
+          <button class="btn btn-outline btn-sm btn-danger" @click="closeAllBrowsers">关闭所有浏览器</button>
+        </div>
       </header>
 
       <!-- 环境警告 -->
@@ -273,9 +337,14 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
       <section v-if="envReady" class="card">
         <div class="card-header">
           <h2 class="card-title">番茄账号</h2>
-          <button class="btn btn-primary btn-sm" @click="startAddAccount" :disabled="loginLoading || loginBrowserOpen">
-            添加账号
-          </button>
+          <div class="header-actions">
+            <button class="btn btn-outline btn-sm" @click="verifyAllAccounts" :disabled="verifying || loginLoading">
+              {{ verifying ? '验证中...' : '检查登录状态' }}
+            </button>
+            <button class="btn btn-primary btn-sm" @click="startAddAccount" :disabled="loginLoading || loginBrowserOpen">
+              添加账号
+            </button>
+          </div>
         </div>
 
         <!-- 已有账号列表 -->
@@ -284,9 +353,12 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
             <div class="account-info">
               <span class="account-name">{{ acc.name }}</span>
               <span v-if="selectedAccount === acc.name" class="status-badge status-current">当前</span>
-              <span class="status-badge status-online">已登录</span>
+              <span v-if="getAccountStatus(acc.name) === 'valid'" class="status-badge status-online">有效</span>
+              <span v-else-if="getAccountStatus(acc.name) === 'expired'" class="status-badge status-expired">已失效</span>
+              <span v-else class="status-badge status-unknown">未验证</span>
             </div>
             <div class="account-actions">
+              <button v-if="getAccountStatus(acc.name) === 'expired'" class="btn btn-primary btn-sm" @click="startLogin(acc.name)">重新登录</button>
               <button v-if="selectedAccount !== acc.name" class="btn btn-primary btn-sm" @click="enterAccount(acc.name)">进入</button>
               <a class="btn btn-outline btn-sm" href="https://fanqienovel.com/main/writer/book-manage" target="_blank" rel="noopener">后台</a>
               <button class="btn btn-outline btn-sm btn-danger" @click="doLogout(acc.name)">删除</button>
@@ -430,6 +502,7 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 .fanqie-layout { height: 100%; width: 100%; overflow-y: auto; background: var(--bg-background); padding-bottom: 4rem; }
 .fanqie-container { max-width: 900px; margin: 0 auto; padding: 0 1.5rem; }
 .page-header { padding: 2.5rem 0 1.5rem; }
+.page-header-top { display: flex; align-items: flex-start; justify-content: space-between; }
 .page-title { font-size: 1.75rem; font-weight: 800; color: var(--text-primary); margin-bottom: 0.25rem; }
 .page-subtitle { color: var(--text-secondary); font-size: 0.9375rem; }
 
@@ -502,6 +575,8 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 .header-actions { display: flex; gap: 0.5rem; }
 .status-badge { font-size: 0.75rem; font-weight: 600; padding: 0.25rem 0.75rem; border-radius: 999px; }
 .status-online { background: rgba(34,197,94,0.1); color: var(--success, #22c55e); }
+.status-expired { background: rgba(239,68,68,0.1); color: var(--error, #ef4444); }
+.status-unknown { background: rgba(156,163,175,0.1); color: var(--text-secondary, #9ca3af); }
 .status-current { background: rgba(99,102,241,0.1); color: var(--primary); }
 
 /* Chapter table */
