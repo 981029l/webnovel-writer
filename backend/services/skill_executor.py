@@ -110,7 +110,7 @@ class SkillExecutor:
             return "反派角色"
         if "major" in imp or "主要" in imp:
             return "主要角色"
-        if any(k in identity_l for k in ["敌", "反派", "邪", "仇", "刺客"]):
+        if any(k in identity_l for k in ["敌", "反派", "邪", "仇", "刺客", "魔", "对手", "boss", "幕后", "黑手"]):
             return "反派角色"
         if any(k in identity_l for k in ["主角", "妻", "父", "母", "兄", "姐", "弟", "妹", "核心"]):
             return "主要角色"
@@ -6816,7 +6816,7 @@ class SkillExecutor:
 ```json
 {{
   "characters": [
-    {{"name": "角色名", "identity": "身份", "first_chapter": 123, "relation": "与主角关系", "description": "描述"}}
+    {{"name": "角色名", "identity": "身份", "importance": "major/minor/villain", "first_chapter": 123, "relation": "与主角关系", "description": "描述"}}
   ],
   "treasures": [
     {{"name": "宝物名", "tier": "品级", "effect": "效果", "owner": "持有者"}}
@@ -6882,7 +6882,8 @@ class SkillExecutor:
                         char["name"] = existing_char_file.stem
                         continue
                     identity = self._safe_text(char.get("identity", ""))
-                    char_dir = char_lib / self._infer_character_category(identity=identity)
+                    importance = self._safe_text(char.get("importance", ""))
+                    char_dir = char_lib / self._infer_character_category(importance=importance, identity=identity)
                     
                     char_file = char_dir / f"{name}.md"
                     if char_file.exists():
