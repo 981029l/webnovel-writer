@@ -3547,6 +3547,10 @@ class SkillExecutor:
             yield make_event("step", name="创建角色档案", status="processing")
             try:
                 await self._create_character_files_from_outline(volume, full_content)
+                # 确保主角档案存在于角色库和活跃角色表
+                protagonist_name = self._resolve_protagonist_name()
+                if protagonist_name:
+                    self._sync_protagonist_profile(protagonist_name)
                 yield make_event("step", name="创建角色档案", status="completed")
             except Exception as e:
                 print(f"[角色系统] 创建角色档案失败: {e}")
