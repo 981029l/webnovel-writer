@@ -157,12 +157,16 @@ export const fanqieApi = {
     pollLogin: () => api.get('/fanqie/login/poll'),
     closeLoginBrowser: () => api.post('/fanqie/login/close'),
     logout: (accountName) => api.post('/fanqie/logout', { account_name: accountName }),
+    verifyAccounts: (accountName) => api.get('/fanqie/verify', { params: accountName ? { account_name: accountName } : {} }),
+    getBrowserSessions: () => api.get('/fanqie/browsers'),
+    closeAllBrowsers: () => api.post('/fanqie/browsers/close-all'),
     getBooks: (accountName) => api.get('/fanqie/books', { params: { account_name: accountName || '默认账号' } }),
     updateConfig: (config) => api.put('/fanqie/config', config),
     getChapters: () => api.get('/fanqie/chapters'),
     syncChapters: () => api.post('/fanqie/chapters/sync'),
     startPublish: (chapterIds) => api.post('/fanqie/publish', { chapter_ids: chapterIds }),
     pollPublish: () => api.get('/fanqie/publish/poll'),
+    stopPublish: () => api.post('/fanqie/publish/stop'),
 }
 
 export default api

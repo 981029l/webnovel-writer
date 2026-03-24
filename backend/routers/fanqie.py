@@ -69,6 +69,41 @@ async def do_logout(data: LoginRequest):
     return fanqie_publisher.logout(data.account_name)
 
 
+@router.get("/verify")
+async def verify_accounts(account_name: str = Query(None)):
+    """验证账号 cookie 有效性"""
+    try:
+        if account_name:
+            result = await fanqie_publisher.verify_account(account_name)
+            return {"results": [result]}
+        else:
+            results = await fanqie_publisher.verify_all_accounts()
+            return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/browsers")
+async def get_browser_sessions():
+    """获取活跃的浏览器会话"""
+    return {"sessions": fanqie_publisher.get_browser_sessions()}
+
+
+@router.get("/debug/screenshot")
+async def debug_screenshot(account_name: str = Query("默认账号")):
+    """截图番茄后台用于调试"""
+    try:
+        return await fanqie_publisher.debug_screenshot(account_name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/browsers/close-all")
+async def close_all_browsers():
+    """关闭所有浏览器会话"""
+    return fanqie_publisher.close_all_browsers()
+
+
 @router.get("/books")
 async def get_books(account_name: str = Query("默认账号")):
     try:
@@ -149,3 +184,9 @@ async def publish_chapters(data: FanqiePublishRequest, root: Path = Depends(get_
 async def poll_publish():
     """轮询发布进度"""
     return fanqie_publisher.get_publish_poll()
+
+
+@router.post("/publish/stop")
+async def stop_publish():
+    """强制停止发布任务"""
+    return fanqie_publisher.stop_publish()
