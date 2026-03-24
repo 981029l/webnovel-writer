@@ -106,7 +106,49 @@ async function copyTitle() {
 }
 const reviewResult = ref(null)
 const showSidebar = ref(true)
-const MAX_AUTO_REVIEW_FIX_ROUNDS = 4
+const MAX_AUTO_TARGETED_FIX_ROUNDS = 3
+const MAX_AUTO_POLISH_ROUNDS = 3
+const MAX_AUTO_REGENERATE_ROUNDS = 3
+
+function getReviewDecision(reviewText = '') {
+  const text = (reviewText || '').trim()
+  if (!text) return null
+  if (/结论\s*[:：]\s*无需修改/i.test(text)) return 'pass'
+  if (/结论\s*[:：]\s*需修改/i.test(text)) return 'needs_revision'
+  if (/是否(?:需要)?修改\s*[:：]\s*否/i.test(text)) return 'pass'
+  if (/是否(?:需要)?修改\s*[:：]\s*是/i.test(text)) return 'needs_revision'
+  return null
+}
+
+function hasActionableReviewIssues(reviewText = '') {
+  const text = (reviewText || '').trim()
+  if (!text) return false
+
+  const decision = getReviewDecision(text)
+  if (decision === 'pass') return false
+  if (decision === 'needs_revision') return true
+
+  const passSignals = /(无需修改|可直接采用|可直接发布|无修改意见|无需改动|无问题|无明显问题|未发现明显问题|未发现问题|审查通过)/i
+  if (passSignals.test(text)) return false
+
+  const issueSignals = [
+    /(?:主要|核心|明显)?问题(?:有|在于|如下|主要有)/i,
+    /存在(?:以下)?问题/i,
+    /有(?:两点|几点|一些)?问题/i,
+    /不足(?:之处|点)?/i,
+    /(?:稍|略)?偏(?:弱|少|轻|空|散|慢|浅)/i,
+    /不够(?:强|足|爽|稳|顺|明显|到位)/i,
+    /(?:写|表现|处理)(?:得)?(?:偏弱|不够|不足|较弱)/i,
+    /(?:联手感|反馈|兑现感|压迫感|爽感)(?:不足|不够|偏弱)/i,
+    /未(?:充分|完全)?(?:体现|兑现|写出|拉满)/i,
+    /需(?:要)?(?:补强|加强|调整|修订|修改|优化|补足)/i,
+    /建议(?:补强|加强|调整|修订|修改|优化|补足)/i,
+    /P0\s*[:：]\s*(?!无|没有|未发现|不存在|0|零)/i,
+    /P1\s*[:：]\s*(?!无|没有|未发现|不存在|0|零)/i
+  ]
+
+  return issueSignals.some(pattern => pattern.test(text))
+}
 
 function hasBlockingReviewIssues(reviewText = '') {
   const text = (reviewText || '').trim()
@@ -435,154 +477,106 @@ function createNewChapter() {
 }
 
 async function aiWriteChapter() {
-  if (!currentChapter.value) return
+  if (!currentChapter.value) {
+    return { success: false, stoppedWithBlockingIssues: false }
+  }
   const aiTaskStore = useAiTaskStore()
-  const targetChapterId = currentChapter.value.id // Bug #1: snapshot chapter ID
+  const targetChapterId = currentChapter.value.id
   aiTaskStore.startTask('AI 写作', `第 ${targetChapterId} 章`)
   aiWriting.value = true
-  const originalContent = editContent.value // Bug #2: backup before clearing
+  const originalContent = editContent.value
   reviewResult.value = null
-  editContent.value = '' // 清空旧内容，显示流式输出
+  editContent.value = ''
 
   try {
-    const response = await aiApi.writeChapterStream(targetChapterId)
-    if (!response.ok) {
-      const raw = await response.text()
-      let detail = raw
-      try {
-        const obj = JSON.parse(raw)
-        detail = obj?.detail || obj?.message || raw
-      } catch (_) {}
-      throw new Error(`写作请求失败（${response.status}）：${detail}`)
-    }
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
+    const generatedResult = await streamWritePass({
+      targetChapterId,
+      aiTaskStore,
+      completionMessage: `✓ 第 ${targetChapterId} 章已生成，正在检查是否需要自动修复`
+    })
 
-    let fullContent = ''
-    let buffer = ''
-    let streamCompleted = false // Bug #5: track stream completion
-
-    const processSseParts = async (parts) => {
-      for (const part of parts) {
-        const line = part.trim()
-        if (!line || !line.startsWith('data: ')) continue
-
-        let data
-        try {
-          data = JSON.parse(line.substring(6))
-        } catch (e) {
-          console.error('Error parsing SSE:', e)
-          continue
-        }
-
-        if (data.type === 'step') {
-          aiTaskStore.updateStep({ step: data.name, name: data.name, status: data.status === 'processing' ? 'active' : 'completed' })
-          message.value = data.name + '...'
-        } else if (data.type === 'content') {
-          if (data.replace && typeof data.full === 'string') {
-            fullContent = data.full
-          } else if (typeof data.full === 'string' && !data.chunk) {
-            fullContent = data.full
-          } else {
-            fullContent += (data.chunk || '')
-          }
-          editContent.value = fullContent // 实时更新编辑器内容
-        } else if (data.type === 'error') {
-          if (data.level === 'warning') {
-            message.value = `⚠️ ${data.message || '后台步骤告警'}`
-            continue
-          }
-          throw new Error(data.message)
-        } else if (data.type === 'review') {
-          reviewResult.value = data.result
-          message.value = '✓ AI 审查完成'
-        } else if (data.type === 'consistency_guard') {
-          const report = data.result || {}
-          const fixes = Number(report.rename_applied || 0)
-          const rewritten = report.ai_rewrite_applied ? 1 : 0
-          if (fixes > 0 || rewritten > 0) {
-            message.value = `一致性修正：术语替换 ${fixes} 处${rewritten ? '，并执行结构化修复' : ''}`
-          }
-        } else if (data.type === 'done') {
-          streamCompleted = true
-          // 后端可能在流式生成后执行一致性修正，最终正文以 done.content 为准
-          if (typeof data.content === 'string' && data.content.trim()) {
-            fullContent = data.content
-            editContent.value = fullContent
-          }
-          message.value = `✓ 第 ${targetChapterId} 章已生成，正在检查是否需要自动修订`
-        }
-      }
+    let fullContent = generatedResult.fullContent
+    let latestReviewText = generatedResult.reviewData?.raw_review || reviewText.value || ''
+    let repairResult = {
+      lastStableContent: fullContent,
+      latestReviewText,
+      stoppedWithBlockingIssues: false,
+      revisionRoundsUsed: 0,
+      polishRoundsUsed: 0,
+      regenerationCount: 0
     }
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) {
-        // Flush decoder 尾缓冲，避免最后一个 SSE 事件未处理导致正文尾部丢失
-        buffer += decoder.decode()
-        const tailParts = buffer.split('\n\n')
-        buffer = ''
-        await processSseParts(tailParts)
-        break
-      }
-
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop()
-      await processSseParts(parts)
+    if (!latestReviewText) {
+      const reviewData = await aiReviewChapter()
+      latestReviewText = reviewData?.raw_review || reviewText.value || ''
+      repairResult.latestReviewText = latestReviewText
     }
-    // Bug #5: fallback if stream ended without done/error event
-    if (!streamCompleted) {
-      aiTaskStore.failTask('写作流异常终止')
-      message.value = '⚠️ AI 写作流异常终止，内容可能不完整'
-    } else {
-      let stoppedWithBlockingIssues = false
-      if (reviewResult.value && hasBlockingReviewIssues(reviewText.value || '')) {
-        aiTaskStore.updateStep({ step: 'post-review-fix', name: '根据审查自动修订', status: 'active' })
-        message.value = '审查发现问题，开始自动修订...'
-        const fixResult = await runTargetedRevisionLoop({
-          targetChapterId,
-          aiTaskStore,
-          startNewTask: false,
-          taskName: 'AI 写作',
-          initialContent: fullContent,
-          initialReviewText: reviewText.value || ''
-        })
-        fullContent = fixResult.lastStableContent
-        stoppedWithBlockingIssues = fixResult.stoppedWithBlockingIssues
-        aiTaskStore.updateStep({
-          step: 'post-review-fix',
-          name: '根据审查自动修订',
-          status: stoppedWithBlockingIssues ? 'failed' : 'completed'
-        })
-      }
 
-      try {
-        const saveResult = await persistChapter(targetChapterId, 'auto')
-        if (stoppedWithBlockingIssues) {
-          aiTaskStore.completeTask(false, `第 ${targetChapterId} 章已生成并自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，仍有待处理问题`)
-          if (saveResult?.post_save_sync_blocked) {
-            message.value = `⚠️ 第 ${targetChapterId} 章已生成并自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
-          } else {
-            message.value = `⚠️ 第 ${targetChapterId} 章已生成并自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，但仍有问题，请人工确认`
-          }
-        } else if (saveResult?.post_save_sync_blocked) {
-          aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成并自动保存（索引同步已阻断）`)
-          message.value = `✓ 第 ${targetChapterId} 章已生成并自动保存（已阻断索引/摘要同步：${saveResult.post_save_sync_block_reason || '审查未通过'}）`
+    if (hasActionableReviewIssues(latestReviewText)) {
+      aiTaskStore.updateStep({ step: 'post-review-repair', name: '审查后自动修复', status: 'active' })
+      message.value = '审查发现问题，开始自动修复...'
+      repairResult = await runAutoReviewRepairPipeline({
+        targetChapterId,
+        aiTaskStore,
+        startNewTask: false,
+        taskName: 'AI 写作',
+        initialContent: fullContent,
+        initialReviewText: latestReviewText,
+        allowRegenerate: true
+      })
+      fullContent = repairResult.lastStableContent
+      latestReviewText = repairResult.latestReviewText
+      aiTaskStore.updateStep({
+        step: 'post-review-repair',
+        name: '审查后自动修复',
+        status: repairResult.stoppedWithBlockingIssues ? 'failed' : 'completed'
+      })
+    }
+
+    const repairSummary = buildAutoRepairSummary(repairResult)
+    const repairActionText = repairSummary ? `，已执行${repairSummary}` : ''
+    const repairTaskText = repairSummary ? `（${repairSummary}）` : ''
+
+    try {
+      const saveResult = await persistChapter(targetChapterId, 'auto')
+      if (repairResult.stoppedWithBlockingIssues) {
+        aiTaskStore.completeTask(false, `第 ${targetChapterId} 章已生成${repairActionText}，仍有待处理问题`)
+        if (saveResult?.post_save_sync_blocked) {
+          message.value = `⚠️ 第 ${targetChapterId} 章已生成${repairActionText}，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
         } else {
-          aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成并自动保存`)
-          message.value = `✓ 第 ${targetChapterId} 章已生成并自动保存`
+          message.value = `⚠️ 第 ${targetChapterId} 章已生成${repairActionText}，但仍有问题，请人工确认`
         }
-      } catch (saveError) {
-        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成，但自动保存失败`)
-        message.value = '⚠️ AI 写作完成，但自动保存失败：' + saveError.message
+      } else if (saveResult?.post_save_sync_blocked) {
+        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成${repairTaskText}并自动保存（索引同步已阻断）`)
+        message.value = `✓ 第 ${targetChapterId} 章已生成${repairActionText}并自动保存（已阻断索引/摘要同步：${saveResult.post_save_sync_block_reason || '审查未通过'}）`
+      } else {
+        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章创作完成${repairTaskText}并自动保存`)
+        message.value = `✓ 第 ${targetChapterId} 章已生成${repairActionText}并自动保存`
+      }
+      return {
+        success: !repairResult.stoppedWithBlockingIssues,
+        stoppedWithBlockingIssues: repairResult.stoppedWithBlockingIssues,
+        repairSummary
+      }
+    } catch (saveError) {
+      aiTaskStore.completeTask(false, `第 ${targetChapterId} 章创作完成${repairTaskText}，但自动保存失败`)
+      message.value = '⚠️ AI 写作完成，但自动保存失败：' + saveError.message
+      return {
+        success: false,
+        stoppedWithBlockingIssues: repairResult.stoppedWithBlockingIssues,
+        repairSummary,
+        saveFailed: true
       }
     }
   } catch (e) {
     aiTaskStore.failTask(e.message)
     message.value = '✗ AI 写作失败：' + e.message
-    // Bug #2: restore original content if editor is empty after failure
     if (!editContent.value) editContent.value = originalContent
+    return {
+      success: false,
+      stoppedWithBlockingIssues: false,
+      error: e.message
+    }
   } finally {
     aiWriting.value = false
   }
@@ -607,134 +601,403 @@ async function aiReviewChapter() {
   }
 }
 
-async function runTargetedRevisionLoop({
+function buildAutoRepairSummary({
+  revisionRoundsUsed = 0,
+  polishRoundsUsed = 0,
+  regenerationCount = 0
+} = {}) {
+  const parts = []
+  if (revisionRoundsUsed > 0) parts.push(`修订 ${revisionRoundsUsed} 轮`)
+  if (polishRoundsUsed > 0) parts.push(`润色 ${polishRoundsUsed} 轮`)
+  if (regenerationCount > 0) parts.push(`重新生成 ${regenerationCount} 次`)
+  return parts.join('，')
+}
+
+async function streamWritePass({
+  targetChapterId,
+  aiTaskStore,
+  stepKeyPrefix = '',
+  stepLabelPrefix = '',
+  completionMessage = ''
+}) {
+  const response = await aiApi.writeChapterStream(targetChapterId)
+  if (!response.ok) {
+    const raw = await response.text()
+    let detail = raw
+    try {
+      const obj = JSON.parse(raw)
+      detail = obj?.detail || obj?.message || raw
+    } catch (_) {}
+    throw new Error(`写作请求失败（${response.status}）：${detail}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let fullContent = ''
+  let buffer = ''
+  let streamCompleted = false
+  let latestReviewData = null
+
+  const processSseParts = async (parts) => {
+    for (const part of parts) {
+      const line = part.trim()
+      if (!line || !line.startsWith('data: ')) continue
+
+      let data
+      try {
+        data = JSON.parse(line.substring(6))
+      } catch (e) {
+        console.error('Error parsing SSE:', e)
+        continue
+      }
+
+      if (data.type === 'step') {
+        const stepName = stepLabelPrefix ? `${stepLabelPrefix} · ${data.name}` : data.name
+        const stepId = stepKeyPrefix ? `${stepKeyPrefix}-${data.name}` : data.name
+        aiTaskStore.updateStep({
+          step: stepId,
+          name: stepName,
+          status: data.status === 'processing' ? 'active' : 'completed'
+        })
+        message.value = `${stepName}...`
+      } else if (data.type === 'content') {
+        if (data.replace && typeof data.full === 'string') {
+          fullContent = data.full
+        } else if (typeof data.full === 'string' && !data.chunk) {
+          fullContent = data.full
+        } else {
+          fullContent += (data.chunk || '')
+        }
+        editContent.value = fullContent
+      } else if (data.type === 'error') {
+        if (data.level === 'warning') {
+          message.value = `⚠️ ${data.message || '后台步骤告警'}`
+          continue
+        }
+        throw new Error(data.message)
+      } else if (data.type === 'review') {
+        reviewResult.value = data.result
+        latestReviewData = data.result
+        message.value = stepLabelPrefix ? `${stepLabelPrefix} · 审查完成` : '✓ AI 审查完成'
+      } else if (data.type === 'consistency_guard') {
+        const report = data.result || {}
+        const fixes = Number(report.rename_applied || 0)
+        const rewritten = report.ai_rewrite_applied ? 1 : 0
+        if (fixes > 0 || rewritten > 0) {
+          const guardMessage = `一致性修正：术语替换 ${fixes} 处${rewritten ? '，并执行结构化修复' : ''}`
+          message.value = stepLabelPrefix ? `${stepLabelPrefix} · ${guardMessage}` : guardMessage
+        }
+      } else if (data.type === 'done') {
+        streamCompleted = true
+        if (typeof data.content === 'string' && data.content.trim()) {
+          fullContent = data.content
+          editContent.value = fullContent
+        }
+        if (completionMessage) {
+          message.value = completionMessage
+        }
+      }
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      buffer += decoder.decode()
+      const tailParts = buffer.split('\n\n')
+      buffer = ''
+      await processSseParts(tailParts)
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop()
+    await processSseParts(parts)
+  }
+
+  if (!streamCompleted) {
+    throw new Error('写作流异常终止')
+  }
+  if (!fullContent.trim()) {
+    throw new Error('AI 未返回生成后的正文')
+  }
+
+  return {
+    fullContent,
+    reviewData: latestReviewData
+  }
+}
+
+async function streamPolishPass({
+  targetChapterId,
+  content,
+  suggestions,
+  mode = 'rewrite',
+  aiTaskStore = null,
+  roundLabel = '',
+}) {
+  const actionLabel = mode === 'targeted_fix' ? '修订' : '润色'
+  const response = await aiApi.polishChapterStream(
+    targetChapterId,
+    content,
+    suggestions,
+    mode
+  )
+  if (!response.ok) {
+    const raw = await response.text()
+    throw new Error(`${actionLabel}请求失败（${response.status}）：${raw}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let fullContent = ''
+  let buffer = ''
+  let streamCompleted = false
+
+  const processPolishSseParts = async (parts) => {
+    for (const part of parts) {
+      const line = part.trim()
+      if (!line || !line.startsWith('data: ')) continue
+
+      let data
+      try {
+        data = JSON.parse(line.substring(6))
+      } catch (e) {
+        console.error('Error parsing SSE:', e)
+        continue
+      }
+
+      if (data.type === 'error') {
+        if (data.level === 'warning') {
+          message.value = `⚠️ ${data.message || '后台步骤告警'}`
+          continue
+        }
+        throw new Error(data.message)
+      } else if (data.type === 'content') {
+        if (data.replace && typeof data.full === 'string') {
+          fullContent = data.full
+        } else if (typeof data.full === 'string' && !data.chunk) {
+          fullContent = data.full
+        } else {
+          fullContent += (data.chunk || '')
+        }
+        editContent.value = fullContent
+      } else if (data.type === 'step') {
+        const detail = roundLabel ? `${roundLabel} · ${data.name || `AI 正在${actionLabel}`}` : (data.name || `AI 正在${actionLabel}`)
+        if (aiTaskStore) {
+          aiTaskStore.updateTaskDetail(detail)
+        }
+        message.value = detail
+      } else if (data.type === 'done') {
+        streamCompleted = true
+        if (typeof data.content === 'string' && data.content.trim()) {
+          fullContent = data.content
+          editContent.value = fullContent
+        }
+      }
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      buffer += decoder.decode()
+      const tailParts = buffer.split('\n\n')
+      buffer = ''
+      await processPolishSseParts(tailParts)
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop()
+    await processPolishSseParts(parts)
+  }
+
+  if (!streamCompleted) {
+    throw new Error(`${actionLabel}流异常终止`)
+  }
+  if (!fullContent.trim()) {
+    throw new Error(`AI 未返回${actionLabel}后的正文`)
+  }
+
+  return fullContent
+}
+
+async function runReviewRepairStage({
+  targetChapterId,
+  aiTaskStore,
+  stageKeyPrefix,
+  stageName,
+  mode,
+  maxRounds,
+  initialContent,
+  initialReviewText
+}) {
+  let lastStableContent = initialContent
+  let latestReviewText = initialReviewText
+  let completedRounds = 0
+
+  for (let round = 1; round <= maxRounds; round += 1) {
+    const actionStepId = `${stageKeyPrefix}-round-${round}`
+    const reviewStepId = `${stageKeyPrefix}-review-${round}`
+    const roundLabel = `第 ${round} 轮${stageName}`
+
+    aiTaskStore.updateStep({ step: actionStepId, name: roundLabel, status: 'active' })
+    aiTaskStore.updateTaskDetail(roundLabel)
+    message.value = `${roundLabel}中...`
+
+    const revisedContent = await streamPolishPass({
+      targetChapterId,
+      content: lastStableContent,
+      suggestions: latestReviewText,
+      mode,
+      aiTaskStore,
+      roundLabel
+    })
+
+    aiTaskStore.updateStep({ step: actionStepId, name: roundLabel, status: 'completed' })
+    completedRounds = round
+    lastStableContent = revisedContent
+    editContent.value = revisedContent
+
+    const reviewStepName = `${roundLabel}后审查`
+    aiTaskStore.updateStep({ step: reviewStepId, name: reviewStepName, status: 'active' })
+    aiTaskStore.updateTaskDetail(reviewStepName)
+    message.value = `${roundLabel}完成，正在复审...`
+    const reviewData = await aiReviewChapter()
+    aiTaskStore.updateStep({ step: reviewStepId, name: reviewStepName, status: 'completed' })
+    latestReviewText = reviewData?.raw_review || reviewText.value || ''
+
+    if (!hasActionableReviewIssues(latestReviewText)) {
+      break
+    }
+  }
+
+  return {
+    lastStableContent,
+    latestReviewText,
+    completedRounds,
+    passed: !hasActionableReviewIssues(latestReviewText)
+  }
+}
+
+async function runAutoReviewRepairPipeline({
   targetChapterId,
   aiTaskStore,
   startNewTask = false,
   taskName = '按审查修订',
   initialContent = editContent.value,
-  initialReviewText = reviewText.value || ''
+  initialReviewText = reviewText.value || '',
+  allowRegenerate = true,
 }) {
   let lastStableContent = initialContent
   let latestReviewText = initialReviewText
-  let stoppedWithBlockingIssues = false
+  let revisionRoundsUsed = 0
+  let polishRoundsUsed = 0
+  let regenerationCount = 0
 
   if (startNewTask) {
     aiTaskStore.startTask(taskName, `第 ${targetChapterId} 章`)
   } else {
-    aiTaskStore.updateTaskDetail('进入按审查修订')
+    aiTaskStore.updateTaskDetail('进入自动修复流程')
   }
 
   aiRevising.value = true
-  message.value = 'AI 正在根据审查意见修订...'
+  message.value = 'AI 正在根据审查意见自动修复...'
 
   try {
-    for (let round = 1; round <= MAX_AUTO_REVIEW_FIX_ROUNDS; round += 1) {
-      const reviseStepId = `revise-round-${round}`
-      const reviewStepId = `review-round-${round}`
-      aiTaskStore.updateStep({ step: reviseStepId, name: `第 ${round} 轮修订`, status: 'active' })
-      aiTaskStore.updateTaskDetail(`第 ${round} 轮修订`)
-      message.value = `第 ${round} 轮按审查修订中...`
+    while (hasActionableReviewIssues(latestReviewText)) {
+      const cycleKey = regenerationCount > 0 ? `rewrite-cycle-${regenerationCount}` : 'initial-cycle'
 
-      const response = await aiApi.polishChapterStream(
+      const revisionResult = await runReviewRepairStage({
         targetChapterId,
-        lastStableContent,
-        latestReviewText,
-        'targeted_fix'
-      )
-      if (!response.ok) {
-        const raw = await response.text()
-        throw new Error(`修订请求失败（${response.status}）：${raw}`)
-      }
+        aiTaskStore,
+        stageKeyPrefix: `${cycleKey}-targeted-fix`,
+        stageName: '修订',
+        mode: 'targeted_fix',
+        maxRounds: MAX_AUTO_TARGETED_FIX_ROUNDS,
+        initialContent: lastStableContent,
+        initialReviewText: latestReviewText
+      })
+      lastStableContent = revisionResult.lastStableContent
+      latestReviewText = revisionResult.latestReviewText
+      revisionRoundsUsed += revisionResult.completedRounds
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let revisedContent = ''
-      let buffer = ''
-      let streamCompleted = false
-
-      const processRevisionSseParts = async (parts) => {
-        for (const part of parts) {
-          const line = part.trim()
-          if (!line || !line.startsWith('data: ')) continue
-          const data = JSON.parse(line.substring(6))
-
-          if (data.type === 'error') {
-            if (data.level === 'warning') {
-              message.value = `⚠️ ${data.message || '后台步骤告警'}`
-              continue
-            }
-            throw new Error(data.message)
-          } else if (data.type === 'content') {
-            if (data.replace && typeof data.full === 'string') {
-              revisedContent = data.full
-            } else if (typeof data.full === 'string' && !data.chunk) {
-              revisedContent = data.full
-            } else {
-              revisedContent += (data.chunk || '')
-            }
-            editContent.value = revisedContent
-          } else if (data.type === 'step') {
-            const detail = `第 ${round} 轮 · ${data.name || 'AI 正在修订'}`
-            aiTaskStore.updateTaskDetail(detail)
-            message.value = detail
-          } else if (data.type === 'done') {
-            streamCompleted = true
-            if (typeof data.content === 'string' && data.content.trim()) {
-              revisedContent = data.content
-              editContent.value = revisedContent
-            }
-          }
-        }
-      }
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) {
-          buffer += decoder.decode()
-          const tailParts = buffer.split('\n\n')
-          buffer = ''
-          await processRevisionSseParts(tailParts)
-          break
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split('\n\n')
-        buffer = parts.pop()
-        await processRevisionSseParts(parts)
-      }
-
-      if (!streamCompleted) {
-        throw new Error('修订流异常终止')
-      }
-      if (!revisedContent.trim()) {
-        throw new Error('AI 未返回修订后的正文')
-      }
-
-      aiTaskStore.updateStep({ step: reviseStepId, name: `第 ${round} 轮修订`, status: 'completed' })
-      lastStableContent = revisedContent
-      editContent.value = revisedContent
-
-      aiTaskStore.updateStep({ step: reviewStepId, name: `第 ${round} 轮复审`, status: 'active' })
-      aiTaskStore.updateTaskDetail(`第 ${round} 轮复审`)
-      message.value = `第 ${round} 轮修订完成，正在复审...`
-      const reviewData = await aiReviewChapter()
-      aiTaskStore.updateStep({ step: reviewStepId, name: `第 ${round} 轮复审`, status: 'completed' })
-      latestReviewText = reviewData?.raw_review || reviewText.value || ''
-
-      if (!hasBlockingReviewIssues(latestReviewText)) {
+      if (!hasActionableReviewIssues(latestReviewText)) {
         break
       }
 
-      if (round === MAX_AUTO_REVIEW_FIX_ROUNDS) {
-        stoppedWithBlockingIssues = true
-        message.value = `⚠️ 已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，仍有问题，请人工确认`
+      if (revisionResult.completedRounds >= MAX_AUTO_TARGETED_FIX_ROUNDS) {
+        message.value = `修订 ${MAX_AUTO_TARGETED_FIX_ROUNDS} 轮后仍有问题，转入润色...`
+      }
+
+      const polishResult = await runReviewRepairStage({
+        targetChapterId,
+        aiTaskStore,
+        stageKeyPrefix: `${cycleKey}-polish`,
+        stageName: '润色',
+        mode: 'rewrite',
+        maxRounds: MAX_AUTO_POLISH_ROUNDS,
+        initialContent: lastStableContent,
+        initialReviewText: latestReviewText
+      })
+      lastStableContent = polishResult.lastStableContent
+      latestReviewText = polishResult.latestReviewText
+      polishRoundsUsed += polishResult.completedRounds
+
+      if (!hasActionableReviewIssues(latestReviewText)) {
+        break
+      }
+
+      if (!allowRegenerate || regenerationCount >= MAX_AUTO_REGENERATE_ROUNDS) {
+        break
+      }
+
+      regenerationCount += 1
+      const regenerateStepId = `regenerate-round-${regenerationCount}`
+      const regenerateLabel = `第 ${regenerationCount} 次重新生成`
+      aiTaskStore.updateStep({ step: regenerateStepId, name: regenerateLabel, status: 'active' })
+      aiTaskStore.updateTaskDetail(regenerateLabel)
+      reviewResult.value = null
+      editContent.value = ''
+      message.value = `修订和润色后仍有问题，开始${regenerateLabel}...`
+
+      const generatedResult = await streamWritePass({
+        targetChapterId,
+        aiTaskStore,
+        stepKeyPrefix: regenerateStepId,
+        stepLabelPrefix: regenerateLabel,
+        completionMessage: `${regenerateLabel}完成，正在重新检查是否需要自动修复`
+      })
+
+      aiTaskStore.updateStep({ step: regenerateStepId, name: regenerateLabel, status: 'completed' })
+      lastStableContent = generatedResult.fullContent
+      latestReviewText = generatedResult.reviewData?.raw_review || reviewText.value || ''
+
+      if (!latestReviewText) {
+        const reviewData = await aiReviewChapter()
+        latestReviewText = reviewData?.raw_review || reviewText.value || ''
       }
     }
-    return { lastStableContent, latestReviewText, stoppedWithBlockingIssues }
+
+    const stoppedWithBlockingIssues = hasActionableReviewIssues(latestReviewText)
+    if (stoppedWithBlockingIssues) {
+      message.value = '⚠️ 自动修复与重新生成已到上限，仍有问题，请人工确认'
+    }
+
+    return {
+      lastStableContent,
+      latestReviewText,
+      stoppedWithBlockingIssues,
+      revisionRoundsUsed,
+      polishRoundsUsed,
+      regenerationCount
+    }
   } catch (e) {
-    aiTaskStore.updateStep({ step: `error-${Date.now()}`, name: e.message || '修订失败', status: 'failed' })
-    message.value = '✗ 按审查修订失败：' + (e.response?.data?.detail || e.message)
+    aiTaskStore.updateStep({ step: `error-${Date.now()}`, name: e.message || '自动修复失败', status: 'failed' })
+    message.value = '✗ 自动修复失败：' + (e.response?.data?.detail || e.message)
     editContent.value = lastStableContent
     throw e
   } finally {
@@ -749,31 +1012,35 @@ async function aiReviseByReview() {
   const targetChapterId = currentChapter.value.id
 
   try {
-    const { stoppedWithBlockingIssues } = await runTargetedRevisionLoop({
+    const repairResult = await runAutoReviewRepairPipeline({
       targetChapterId,
       aiTaskStore,
       startNewTask: true,
-      taskName: '按审查修订'
+      taskName: '按审查修订',
+      allowRegenerate: false
     })
+    const repairSummary = buildAutoRepairSummary(repairResult)
+    const repairActionText = repairSummary ? `，已执行${repairSummary}` : ''
+    const repairTaskText = repairSummary ? `（${repairSummary}）` : ''
 
     try {
       const saveResult = await persistChapter(targetChapterId, 'auto')
-      if (stoppedWithBlockingIssues) {
-        aiTaskStore.completeTask(false, `第 ${targetChapterId} 章已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮，仍有待处理问题`)
+      if (repairResult.stoppedWithBlockingIssues) {
+        aiTaskStore.completeTask(false, `第 ${targetChapterId} 章已完成自动修复${repairActionText}，仍有待处理问题`)
         if (saveResult?.post_save_sync_blocked) {
-          message.value = `⚠️ 已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮并保存当前结果，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
+          message.value = `⚠️ 已完成自动修复${repairActionText}并保存当前结果，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
         } else {
-          message.value = `⚠️ 已自动修订 ${MAX_AUTO_REVIEW_FIX_ROUNDS} 轮并保存当前结果，但仍有问题，请人工确认`
+          message.value = `⚠️ 已完成自动修复${repairActionText}并保存当前结果，但仍有问题，请人工确认`
         }
       } else if (saveResult?.post_save_sync_blocked) {
-        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已修订并复审（索引同步已阻断）`)
-        message.value = `✓ 按审查修订并复审完成（已阻断索引/摘要同步：${saveResult.post_save_sync_block_reason || '审查未通过'}）`
+        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已完成自动修复${repairTaskText}（索引同步已阻断）`)
+        message.value = `✓ 按审查修订并复审完成${repairActionText}（已阻断索引/摘要同步：${saveResult.post_save_sync_block_reason || '审查未通过'}）`
       } else {
-        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已修订并复审`)
-        message.value = '✓ 按审查修订并复审完成'
+        aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已完成自动修复${repairTaskText}`)
+        message.value = `✓ 按审查修订并复审完成${repairActionText}`
       }
     } catch (saveError) {
-      aiTaskStore.completeTask(true, `第 ${targetChapterId} 章已修订并复审，但自动保存失败`)
+      aiTaskStore.completeTask(false, `第 ${targetChapterId} 章已完成自动修复，但自动保存失败`)
       message.value = '⚠️ 修订与复审完成，但自动保存失败：' + saveError.message
     }
   } catch (e) {
@@ -792,8 +1059,6 @@ async function startAutoBatch() {
   const totalChapters = autoBatchTotal.value
   autoBatchRunning.value = true
   autoBatchCurrent.value = 0
-
-  const aiTaskStore = useAiTaskStore()
 
   try {
     for (let i = 0; i < totalChapters; i++) {
@@ -821,12 +1086,21 @@ async function startAutoBatch() {
         break
       }
 
-      // 调用现有的 aiWriteChapter（含生成+审查+自动修订+保存）
-      await aiWriteChapter()
+      // 执行生成 + 审查 + 自动修复 + 保存；失败或仍有拦截问题时停止连写
+      const writeResult = await aiWriteChapter()
+
+      if (!writeResult?.success) {
+        if (writeResult?.stoppedWithBlockingIssues) {
+          message.value = `自动连写停止：第 ${chapterId} 章自动修复后审查仍判定需修改，请人工处理（完成 ${i}/${totalChapters} 章）`
+        } else {
+          message.value = `自动连写停止：第 ${chapterId} 章写作流程失败，请人工处理（完成 ${i}/${totalChapters} 章）`
+        }
+        break
+      }
 
       // 检查是否因大问题停止
-      if (reviewResult.value && hasBlockingReviewIssues(reviewText.value || '')) {
-        message.value = `自动连写停止：第 ${chapterId} 章有未解决的严重问题，请人工处理（完成 ${i}/${totalChapters} 章）`
+      if (reviewResult.value && hasActionableReviewIssues(reviewText.value || '')) {
+        message.value = `自动连写停止：第 ${chapterId} 章审查结论仍为需修改，请人工处理（完成 ${i}/${totalChapters} 章）`
         break
       }
 
@@ -898,88 +1172,24 @@ async function handlePolishConfirm() {
   aiPolishing.value = true
 
   const hints = reviewText.value || ''
-  const originalContent = editContent.value // Hold original content
+  const originalContent = editContent.value
   const targetChapterId = currentChapter.value?.id
 
-  // Clear editor to show typing effect
   editContent.value = ''
   message.value = 'AI 正在润色...'
 
   try {
-    const response = await aiApi.polishChapterStream(
-      currentChapter.value.id,
-      originalContent,
-      hints
-    )
-    if (!response.ok) {
-      const raw = await response.text()
-      throw new Error(`润色请求失败（${response.status}）：${raw}`)
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let fullContent = ''
-    let buffer = ''
-    let streamCompleted = false
-
-    const processPolishSseParts = async (parts) => {
-      for (const part of parts) {
-        const line = part.trim()
-        if (!line || !line.startsWith('data: ')) continue
-        const data = JSON.parse(line.substring(6))
-        if (data.type === 'error') {
-          if (data.level === 'warning') {
-            message.value = `⚠️ ${data.message || '后台步骤告警'}`
-            continue
-          }
-          throw new Error(data.message)
-        } else if (data.type === 'content') {
-          if (typeof data.full === 'string' && !data.chunk) {
-            fullContent = data.full
-          } else {
-            fullContent += (data.chunk || '')
-          }
-          editContent.value = fullContent
-        } else if (data.type === 'step') {
-          message.value = data.name
-        } else if (data.type === 'done') {
-          streamCompleted = true
-          if (typeof data.content === 'string' && data.content.trim()) {
-            fullContent = data.content
-            editContent.value = fullContent
-          }
-        }
-      }
-    }
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) {
-        // Flush decoder 尾缓冲，避免最后一个 SSE 事件未处理
-        buffer += decoder.decode()
-        const tailParts = buffer.split('\n\n')
-        buffer = ''
-        await processPolishSseParts(tailParts)
-        break
-      }
-
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop()
-      await processPolishSseParts(parts)
-    }
-
-    if (!streamCompleted) {
-      throw new Error('润色流异常终止')
-    }
-    if (!fullContent.trim()) {
-      throw new Error('AI 未返回润色后的正文')
-    }
+    await streamPolishPass({
+      targetChapterId,
+      content: originalContent,
+      suggestions: hints,
+      mode: 'rewrite',
+      roundLabel: '手动润色'
+    })
   } catch (e) {
     message.value = '✗ 润色失败：' + (e.response?.data?.detail || e.message)
-    // If failed, restore original content
     if (!editContent.value) {
-        editContent.value = originalContent
+      editContent.value = originalContent
     }
     return
   }
@@ -991,7 +1201,7 @@ async function handlePolishConfirm() {
 
     try {
       const saveResult = await persistChapter(targetChapterId, 'auto')
-      if (hasBlockingReviewIssues(latestReviewText)) {
+      if (hasActionableReviewIssues(latestReviewText)) {
         if (saveResult?.post_save_sync_blocked) {
           message.value = `⚠️ 润色完成并已自动审查，但仍有问题：${saveResult.post_save_sync_block_reason || '审查未通过'}`
         } else {
