@@ -74,8 +74,8 @@ class AIService:
                 # 每次重试都创建新的 connector 和 session，确保连接干净
                 connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
                 timeout = aiohttp.ClientTimeout(total=self.timeout, connect=30, sock_read=self.timeout)
-                # trust_env=False 忽略系统代理，避免 localhost 连接问题
-                async with aiohttp.ClientSession(connector=connector, timeout=timeout, trust_env=False) as session:
+                # trust_env=True 允许使用系统代理，解决全球区域访问限制问题
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout, trust_env=True) as session:
                     async with session.post(url, json=payload, headers=headers) as response:
                         if response.status == 200:
                             data = await response.json()
@@ -131,8 +131,8 @@ class AIService:
             try:
                 connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
                 timeout = aiohttp.ClientTimeout(total=self.timeout, connect=30, sock_read=300)
-                # trust_env=False 忽略系统代理
-                async with aiohttp.ClientSession(connector=connector, timeout=timeout, trust_env=False) as session:
+                # trust_env=True 允许使用系统代理
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout, trust_env=True) as session:
                     async with session.post(url, json=payload, headers=headers) as response:
                         self._debug(f"AI Stream Response Status: {response.status}")
                         self._debug(f"AI Stream Content-Type: {response.headers.get('Content-Type', 'unknown')}")
@@ -243,7 +243,7 @@ class AIService:
             url = f"{base_url}/models"
         else:
             url = f"{base_url}/v1/models"
-            
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -251,13 +251,13 @@ class AIService:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         try:
-            # trust_env=False 防止受到系统代理影响 (解决 localhost 502 问题)
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True, http2=False, trust_env=False) as client:
+            proxy_url = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY") or os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY") or None
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True, proxy=proxy_url) as client:
                 response = await client.get(url, headers=headers)
                 if response.status_code != 200:
                     print(f"Error fetching models: {response.status_code} - {response.text}")
                     return [self.model]
-                
+
                 data = response.json()
                 if "data" in data and isinstance(data["data"], list):
                     return [m["id"] for m in data["data"]]

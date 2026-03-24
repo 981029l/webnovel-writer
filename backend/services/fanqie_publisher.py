@@ -61,7 +61,9 @@ def check_environment() -> dict:
         result["fix_commands"] = ["pip install playwright", "playwright install chromium"]
         return result
 
-    browsers_path = Path.home() / ".cache" / "ms-playwright"
+    browsers_path = Path.home() / "Library" / "Caches" / "ms-playwright"
+    if not browsers_path.exists():
+        browsers_path = Path.home() / ".cache" / "ms-playwright"
     if browsers_path.exists() and list(browsers_path.glob("chromium*")):
         result["ready"] = True
     else:

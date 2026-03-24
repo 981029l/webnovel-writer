@@ -95,6 +95,7 @@
 | Python      | >= 3.8   | 数据处理脚本运行环境    |
 | Claude Code | 最新版   | Anthropic 官方 CLI 工具 |
 | Git         | 任意版本 | 版本控制和章节备份      |
+| Playwright  | 可选     | 番茄小说自动发布功能需要 |
 
 ### 1. 安装
 
@@ -115,6 +116,20 @@ pip install -r .claude/scripts/requirements.txt
 | -------- | -------------------------------------------------- |
 | aiohttp  | 异步 HTTP 客户端，用于 Embedding/Reranker API 调用 |
 | filelock | 文件锁，防止 state.json 并发写入冲突               |
+
+### 番茄小说发布功能（可选）
+
+如果需要使用番茄小说自动发布功能，需要额外安装 Playwright 和 Chromium 浏览器：
+
+```bash
+# 1. 安装 Playwright 库
+pip install playwright
+
+# 2. 下载 Chromium 浏览器
+python3 -m playwright install chromium
+```
+
+> **常见问题**：如果前端页面提示「Chromium 浏览器未安装」，说明只安装了 Playwright 库但没有下载浏览器，请执行上面的第 2 步。
 
 ### 2. 初始化项目
 
