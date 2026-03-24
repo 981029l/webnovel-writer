@@ -4016,6 +4016,74 @@ class SkillExecutor:
         except Exception as e:
              yield make_event("error", message=str(e))
 
+    def _extract_review_decision(self, review_text: str) -> str:
+        text = self._safe_text(review_text).strip()
+        if not text:
+            return "unknown"
+
+        if re.search(r"结论\s*[:：]\s*无需修改", text, re.IGNORECASE):
+            return "pass"
+        if re.search(r"结论\s*[:：]\s*需修改", text, re.IGNORECASE):
+            return "needs_revision"
+        if re.search(r"是否(?:需要)?修改\s*[:：]\s*否", text, re.IGNORECASE):
+            return "pass"
+        if re.search(r"是否(?:需要)?修改\s*[:：]\s*是", text, re.IGNORECASE):
+            return "needs_revision"
+
+        pass_signals = [
+            r"无需修改",
+            r"可直接采用",
+            r"可直接发布",
+            r"无修改意见",
+            r"无需改动",
+            r"无问题",
+            r"无明显问题",
+            r"未发现明显问题",
+            r"未发现问题",
+            r"审查通过",
+        ]
+        issue_signals = [
+            r"(?:主要|核心|明显)?问题(?:有|在于|如下|主要有)",
+            r"存在(?:以下)?问题",
+            r"有(?:两点|几点|一些)?问题",
+            r"不足(?:之处|点)?",
+            r"(?:稍|略)?偏(?:弱|少|轻|空|散|慢|浅)",
+            r"不够(?:强|足|爽|稳|顺|明显|到位)",
+            r"未(?:充分|完全)?(?:体现|兑现|写出|拉满)",
+            r"需(?:要)?(?:补强|加强|调整|修订|修改|优化|补足)",
+            r"建议(?:补强|加强|调整|修订|修改|优化|补足)",
+            r"P0\s*[:：]\s*(?!无|没有|未发现|不存在|0|零)",
+            r"P1\s*[:：]\s*(?!无|没有|未发现|不存在|0|零)",
+        ]
+
+        has_pass = any(re.search(pattern, text, re.IGNORECASE) for pattern in pass_signals)
+        has_issue = any(re.search(pattern, text, re.IGNORECASE) for pattern in issue_signals)
+
+        if has_issue:
+            return "needs_revision"
+        if has_pass:
+            return "pass"
+        return "unknown"
+
+    def _normalize_review_output(self, review_text: str) -> tuple[str, str, Optional[bool]]:
+        text = self._safe_text(review_text).strip()
+        decision = self._extract_review_decision(text)
+
+        if decision == "pass":
+            prefix = "结论：无需修改"
+            needs_revision: Optional[bool] = False
+        elif decision == "needs_revision":
+            prefix = "结论：需修改"
+            needs_revision = True
+        else:
+            prefix = ""
+            needs_revision = None
+
+        if prefix and not re.match(r"^\s*结论\s*[:：]", text):
+            text = f"{prefix}\n{text}" if text else prefix
+
+        return text, decision, needs_revision
+
     async def execute_review(self, chapter_id: int, content: str = None) -> Dict[str, Any]:
         """执行审查工作流 (使用 review.md Skill)"""
         review_budget = self._get_context_budgets("review")
@@ -4198,8 +4266,21 @@ class SkillExecutor:
             
         user_content += f"【正文内容（已压缩抽样）】\n{content_for_review}\n\n"
         
-        # 直接返回纯文本审查结果，不再强制JSON
-        user_content += "\n请直接用自然语言写审查意见，300字以内，不需要JSON格式。\n"
+        user_content += """
+请严格按以下固定格式输出，不能省略第一行结论：
+结论：需修改
+或
+结论：无需修改
+
+然后继续写：
+原因：一句话说明为什么需要/不需要修改。
+意见：如果“需修改”，列 1-3 条最关键修改点；如果“无需修改”，写“无”。
+
+要求：
+1. 总字数 300 字以内。
+2. 不要输出 JSON，不要写多余前言。
+3. “结论”只能二选一：需修改 / 无需修改。
+"""
 
         # 4. 调用 AI
         try:
@@ -4218,12 +4299,16 @@ class SkillExecutor:
                  result_str = result_str.split("\n", 1)[-1]
              if result_str.endswith("```"):
                  result_str = result_str.rsplit("```", 1)[0].strip()
+
+             result_str, review_decision, needs_revision = self._normalize_review_output(result_str)
              
              self._debug(f"[REVIEW DEBUG] 审查结果 ({len(result_str)}字): {result_str[:200]}")
              
              return {
                  "success": True,
-                 "raw_review": result_str
+                 "raw_review": result_str,
+                 "review_decision": review_decision,
+                 "needs_revision": needs_revision,
              }
 
         except Exception as e:
