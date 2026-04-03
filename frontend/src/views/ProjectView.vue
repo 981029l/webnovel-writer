@@ -1183,17 +1183,180 @@ async function rebuildIndex() {
   margin-top: 1.5rem;
 }
 @media (max-width: 900px) {
+  .project-view {
+    padding: 1.25rem 1rem;
+  }
+  .project-content {
+    padding-bottom: 2rem;
+  }
+  .page-header {
+    margin-bottom: 1.5rem;
+  }
+  .page-title {
+    font-size: 1.65rem;
+  }
+  .page-subtitle {
+    font-size: 0.92rem;
+  }
+  .premium-card,
+  .init-card {
+    padding: 1.2rem;
+    border-radius: 18px;
+    margin-bottom: 1rem;
+  }
+  .card-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.9rem;
+  }
+  .title-actions,
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+  .title-display {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .project-title-text {
+    font-size: 1.05rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .title-input-edit {
+    width: 100%;
+    font-size: 1.05rem;
+  }
   .target-words-row {
     justify-content: flex-start;
-    margin-top: -0.5rem;
+    margin-top: -0.25rem;
+    flex-wrap: wrap;
   }
   .target-words-input {
     width: 130px;
+  }
+  .stats-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+  .stat-box {
+    padding: 0.85rem;
+  }
+  .guide-grid,
+  .form-grid,
+  .form-grid-config {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .form-group.full {
+    grid-column: span 1;
   }
   .settings-grid { grid-template-columns: 1fr; }
   .genre-profile-head {
     flex-direction: column;
     align-items: stretch;
+  }
+  .model-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .model-row .btn,
+  .model-row :deep(.input-container) {
+    width: 100%;
+  }
+  .titles-dialog {
+    width: calc(100vw - 1.5rem);
+    max-width: calc(100vw - 1.5rem);
+    max-height: calc(100vh - 1.5rem);
+    padding: 1.2rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .project-view {
+    padding: 1rem 0.75rem 1.25rem;
+  }
+  .page-header {
+    text-align: left;
+  }
+  .page-title {
+    font-size: 1.45rem;
+  }
+  .premium-card,
+  .init-card {
+    padding: 1rem;
+    border-radius: 16px;
+  }
+  .stats-row {
+    grid-template-columns: 1fr;
+  }
+  .guide-section {
+    margin: 1.5rem 0;
+  }
+  .guide-grid {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+  .guide-card {
+    padding: 1rem;
+    gap: 0.9rem;
+    align-items: flex-start;
+  }
+  .guide-icon-wrapper {
+    width: 3rem;
+    height: 3rem;
+    flex-shrink: 0;
+  }
+  .guide-content h4 {
+    font-size: 1rem;
+  }
+  .guide-content p,
+  .synopsis-content,
+  .warning-body,
+  .setting-content pre {
+    font-size: 0.85rem;
+    line-height: 1.65;
+  }
+  .init-header h2 {
+    font-size: 1.35rem;
+  }
+  .input-modern,
+  .btn-primary-gradient,
+  .btn-danger-ghost {
+    min-height: 44px;
+  }
+  .btn-primary-gradient,
+  .btn-danger-ghost,
+  .genre-profile-head .btn,
+  .title-actions .btn,
+  .header-actions .btn,
+  .modal-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .header-actions,
+  .title-actions,
+  .modal-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+  .target-words-input {
+    width: 100%;
+  }
+  .outline-warning-banner,
+  .genre-profile-card,
+  .synopsis-content,
+  .setting-content {
+    padding: 0.9rem;
+  }
+  .danger-zone {
+    margin-top: 1.5rem;
   }
 }
 .setting-card {

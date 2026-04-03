@@ -362,4 +362,88 @@ watch(() => projectStore.projectRoot, async (newRoot, oldRoot) => {
 .modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem; }
 .modal-actions button { padding: 0.6rem 1.2rem; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-color); background: var(--bg-secondary); }
 .btn-primary { background: var(--primary) !important; color: white !important; border: none !important; }
+
+@media (max-width: 768px) {
+  .character-view {
+    padding: 0.9rem;
+    min-height: 100vh;
+    height: auto;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.9rem;
+    margin-bottom: 1rem;
+  }
+
+  .header-left h1 { font-size: 1.35rem; }
+  .subtitle, .sync-status, .sync-hint { font-size: 0.8rem; }
+
+  .header-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.55rem;
+  }
+
+  .btn-create, .btn-secondary {
+    width: 100%;
+    justify-content: center;
+    padding: 0.62rem 0.75rem;
+    font-size: 0.82rem;
+  }
+
+  .tabs {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    padding-bottom: 0.65rem;
+    margin-bottom: 0.85rem;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tabs button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.82rem;
+  }
+
+  .content-area {
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+
+  .char-list {
+    width: 100%;
+    max-height: 34vh;
+  }
+
+  .char-editor, .no-selection {
+    min-height: 48vh;
+  }
+
+  .editor-header {
+    gap: 0.75rem;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .btn-save {
+    width: 100%;
+  }
+
+  .editor-content {
+    min-height: 42vh;
+    font-size: 0.85rem;
+    padding: 0.85rem;
+  }
+
+  .modal {
+    width: min(92vw, 400px);
+    padding: 1rem;
+  }
+}
+
 </style>

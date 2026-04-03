@@ -106,6 +106,8 @@ async function copyTitle() {
 }
 const reviewResult = ref(null)
 const showSidebar = ref(true)
+const isMobileViewport = ref(false)
+const showMobileTools = ref(false)
 const MAX_AUTO_TARGETED_FIX_ROUNDS = 3
 const MAX_AUTO_POLISH_ROUNDS = 3
 const MAX_AUTO_REGENERATE_ROUNDS = 3
@@ -186,7 +188,18 @@ function hasBlockingReviewIssues(reviewText = '') {
   return false
 }
 
+function syncMobileLayout() {
+  if (typeof window === 'undefined') return
+  isMobileViewport.value = window.innerWidth <= 768
+  if (isMobileViewport.value) {
+    showSidebar.value = false
+  } else {
+    showMobileTools.value = false
+  }
+}
+
 onMounted(async () => {
+  syncMobileLayout()
   await loadChapters()
   await loadOutlineTree()
   if (route.params.chapter) {
@@ -196,6 +209,7 @@ onMounted(async () => {
     autoNavigateToFirstUnwritten()
   }
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('resize', syncMobileLayout)
 })
 
 // 自动跳转到第一个未完成章节
@@ -221,6 +235,7 @@ function autoNavigateToFirstUnwritten() {
 }
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('resize', syncMobileLayout)
 })
 
 function handleKeydown(e) {
@@ -375,6 +390,7 @@ function findChapterTitleFromOutline(chapterId) {
 
 function selectChapter(chapter) {
   if (aiWriting.value || aiPolishing.value || aiRevising.value) return
+  if (isMobileViewport.value) showSidebar.value = false
   router.push(`/workspace/write/${chapter.id}`)
 }
 
@@ -1288,15 +1304,21 @@ const reviewText = computed({
     </Transition>
 
     <!-- 左侧章节导航 -->
-    <aside class="chapter-nav" :class="{ collapsed: !showSidebar }">
+    <div v-if="isMobileViewport && showSidebar" class="chapter-nav-backdrop" @click="showSidebar = false"></div>
+    <aside class="chapter-nav" :class="{ collapsed: !showSidebar, 'mobile-overlay': isMobileViewport }">
       <div class="nav-header">
         <h2 class="nav-title">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 mr-2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>
           章节目录
         </h2>
-        <button class="icon-btn" @click="createNewChapter" title="新建章节">
+        <div class="nav-header-actions">
+          <button v-if="isMobileViewport" class="icon-btn" @click="showSidebar = false" title="关闭章节导航">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+          </button>
+          <button class="icon-btn" @click="createNewChapter" title="新建章节">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
         </button>
+        </div>
       </div>
       
       <div class="chapter-list">
@@ -1359,9 +1381,8 @@ const reviewText = computed({
 
     <!-- 主编辑区 -->
     <main class="editor-main">
-      <!-- 侧边栏展开按钮 (当侧边栏收起时显示, 移到外层以保证在空状态下也由于) -->
       <button 
-        v-if="!showSidebar" 
+        v-if="!isMobileViewport && !showSidebar" 
         class="expand-sidebar-btn" 
         @click="showSidebar = true"
         title="展开侧边栏"
@@ -1375,13 +1396,30 @@ const reviewText = computed({
         <!-- 顶部工具栏 -->
         <header class="editor-toolbar">
           <!-- 第一行：章节标题 + 字数 -->
-          <div class="toolbar-row">
+          <div class="toolbar-row toolbar-row-mobile-head">
             <div class="toolbar-left">
               <div class="title-field">
                 <span class="title-header">
-                  <span class="title-label">章节标题</span>
                   <button
-                    class="btn btn-secondary btn-sm"
+                    v-if="isMobileViewport"
+                    class="chapter-title-toggle"
+                    @click="showSidebar = true"
+                    title="打开章节列表"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                  </button>
+                  <span class="title-label">章节标题</span>
+                </span>
+                <div class="title-input-row">
+                  <input
+                    v-model="editTitle"
+                    class="title-input"
+                    placeholder="输入章节标题..."
+                  />
+                </div>
+                <div v-if="isMobileViewport" class="mobile-title-actions">
+                  <button
+                    class="toolbar-chip"
                     type="button"
                     @click="copyTitle"
                     :disabled="!editTitle?.trim()"
@@ -1389,64 +1427,25 @@ const reviewText = computed({
                   >
                     {{ copyingTitle ? '复制中' : '复制标题' }}
                   </button>
-                </span>
-                <input
-                  v-model="editTitle"
-                  class="title-input"
-                  placeholder="输入章节标题..."
-                />
+                  <button
+                    class="toolbar-chip"
+                    @click="showMobileTools = true"
+                    title="打开工具面板"
+                  >
+                    工具
+                  </button>
+                </div>
               </div>
             </div>
             <span class="word-count-badge">{{ wordCount.toLocaleString() }} 字</span>
           </div>
           <!-- 第二行：操作按钮分组 -->
-          <div class="toolbar-row toolbar-actions">
-            <div class="toolbar-group">
-              <button class="btn img-btn-ghost" @click="confirmDelete" title="删除当前章节">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-              </button>
-            </div>
-            <div class="toolbar-divider"></div>
-            <div class="toolbar-group">
-              <button class="btn btn-secondary btn-sm" @click="copyContent" :disabled="!editContent" title="复制文章">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" /></svg>
-                {{ copying ? '复制中' : '复制文章' }}
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="aiReviewChapter" :disabled="aiReviewing || aiWriting || aiPolishing || aiRevising">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-                {{ aiReviewing ? '审查中' : '审查' }}
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="aiReviseByReview" :disabled="aiRevising || aiReviewing || aiWriting || aiPolishing || !reviewResult" title="仅按审查意见定点修订，并自动继续审查">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487 19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10m6.862-1.513a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
-                {{ aiRevising ? '修订中' : '按审查修订' }}
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="openPolishConfirm" :disabled="aiPolishing || aiReviewing || aiWriting || aiRevising || !reviewResult" title="先审查，再润色">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" /></svg>
-                {{ aiPolishing ? '润色中' : '润色' }}
-              </button>
-            </div>
-            <div class="toolbar-divider"></div>
-            <div class="toolbar-group">
+          <div v-if="!isMobileViewport" class="toolbar-row toolbar-actions">
+            <div class="toolbar-group toolbar-group-primary">
               <button class="btn btn-ai btn-sm" @click="aiWriteChapter" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" /></svg>
                 {{ aiWriting ? '生成中' : '生成' }}
               </button>
-              <button v-if="!autoBatchRunning" class="btn btn-ai btn-sm" @click="showAutoBatchDialog = true" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning" title="自动连续创作多章">
-                自动连写
-              </button>
-              <button v-else class="btn btn-danger btn-sm" @click="stopAutoBatch">
-                停止连写 ({{ autoBatchCurrent }}/{{ autoBatchTotal }})
-              </button>
-            </div>
-            <div class="toolbar-divider"></div>
-            <div class="toolbar-group">
-              <button class="btn btn-secondary btn-sm" @click="handleExtractPreview" :disabled="settingSyncStore.isRunning || !editContent?.trim()" title="自动后台同步设定数据">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
-                {{ settingSyncStore.isRunning ? '同步中...' : '设定同步' }}
-              </button>
-            </div>
-            <div class="toolbar-divider"></div>
-            <div class="toolbar-group toolbar-group-end">
               <button class="btn btn-secondary btn-sm" @click="saveOnly" :disabled="saving || aiWriting || aiReviewing || aiPolishing || aiRevising" title="保存 (Ctrl+S)">
                 <svg v-if="!(saving && saveType === 'only')" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3.25a3 3 0 0 0-3 3 .75.75 0 0 1-1.5 0 4.5 4.5 0 0 1 8 0 3 3 0 0 0 3-3 .75.75 0 0 1 1.5 0 4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1-.9.636l.9.636" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 7.5c0-1.657-1.343-3-3-3h-9c-1.657 0-3 1.343-3 3" /></svg>
                 {{ (saving && saveType === 'only') ? '保存中' : '保存' }}
@@ -1455,8 +1454,44 @@ const reviewText = computed({
                 {{ (saving && saveType === 'next') ? '保存中...' : '下一章' }}
               </button>
             </div>
+
+            <div v-if="!isMobileViewport || showMobileTools" class="toolbar-group toolbar-group-secondary">
+              <button class="btn img-btn-ghost" @click="confirmDelete" title="删除当前章节">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.11 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.11 0 00-7.5 0" /></svg>
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="copyContent" :disabled="!editContent" title="复制文章">{{ copying ? '复制中' : '复制文章' }}</button>
+              <button class="btn btn-secondary btn-sm" @click="aiReviewChapter" :disabled="aiReviewing || aiWriting || aiPolishing || aiRevising">{{ aiReviewing ? '审查中' : '审查' }}</button>
+              <button class="btn btn-secondary btn-sm" @click="aiReviseByReview" :disabled="aiRevising || aiReviewing || aiWriting || aiPolishing || !reviewResult" title="仅按审查意见定点修订，并自动继续审查">{{ aiRevising ? '修订中' : '按审查修订' }}</button>
+              <button class="btn btn-secondary btn-sm" @click="openPolishConfirm" :disabled="aiPolishing || aiReviewing || aiWriting || aiRevising || !reviewResult" title="先审查，再润色">{{ aiPolishing ? '润色中' : '润色' }}</button>
+              <button v-if="!autoBatchRunning" class="btn btn-ai btn-sm" @click="showAutoBatchDialog = true" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning" title="自动连续创作多章">自动连写</button>
+              <button v-else class="btn btn-danger btn-sm" @click="stopAutoBatch">停止连写 ({{ autoBatchCurrent }}/{{ autoBatchTotal }})</button>
+              <button class="btn btn-secondary btn-sm" @click="handleExtractPreview" :disabled="settingSyncStore.isRunning || !editContent?.trim()" title="自动后台同步设定数据">{{ settingSyncStore.isRunning ? '同步中...' : '设定同步' }}</button>
+            </div>
           </div>
         </header>
+
+        <div v-if="isMobileViewport && showMobileTools" class="mobile-tools-sheet-backdrop" @click="showMobileTools = false"></div>
+        <div v-if="isMobileViewport && showMobileTools" class="mobile-tools-sheet">
+          <div class="mobile-tools-sheet-header">
+            <strong>写作工具</strong>
+            <button class="icon-btn" @click="showMobileTools = false" title="关闭工具面板">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="mobile-tools-grid">
+            <button class="btn btn-ai btn-sm" @click="aiWriteChapter(); showMobileTools = false" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning">{{ aiWriting ? '生成中' : '生成' }}</button>
+            <button class="btn btn-secondary btn-sm" @click="saveOnly(); showMobileTools = false" :disabled="saving || aiWriting || aiReviewing || aiPolishing || aiRevising">{{ (saving && saveType === 'only') ? '保存中' : '保存' }}</button>
+            <button class="btn btn-primary btn-sm" @click="saveAndNext(); showMobileTools = false" :disabled="saving || aiWriting || aiReviewing || aiPolishing || aiRevising">{{ (saving && saveType === 'next') ? '保存中...' : '下一章' }}</button>
+            <button class="btn btn-secondary btn-sm" @click="copyContent(); showMobileTools = false" :disabled="!editContent">{{ copying ? '复制中' : '复制文章' }}</button>
+            <button class="btn btn-secondary btn-sm" @click="aiReviewChapter(); showMobileTools = false" :disabled="aiReviewing || aiWriting || aiPolishing || aiRevising">{{ aiReviewing ? '审查中' : '审查' }}</button>
+            <button class="btn btn-secondary btn-sm" @click="aiReviseByReview(); showMobileTools = false" :disabled="aiRevising || aiReviewing || aiWriting || aiPolishing || !reviewResult">{{ aiRevising ? '修订中' : '按审查修订' }}</button>
+            <button class="btn btn-secondary btn-sm" @click="openPolishConfirm(); showMobileTools = false" :disabled="aiPolishing || aiReviewing || aiWriting || aiRevising || !reviewResult">{{ aiPolishing ? '润色中' : '润色' }}</button>
+            <button v-if="!autoBatchRunning" class="btn btn-ai btn-sm" @click="showAutoBatchDialog = true; showMobileTools = false" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning">自动连写</button>
+            <button v-else class="btn btn-danger btn-sm" @click="stopAutoBatch(); showMobileTools = false">停止连写</button>
+            <button class="btn btn-secondary btn-sm" @click="handleExtractPreview(); showMobileTools = false" :disabled="settingSyncStore.isRunning || !editContent?.trim()">{{ settingSyncStore.isRunning ? '同步中...' : '设定同步' }}</button>
+            <button class="btn btn-secondary btn-sm" @click="confirmDelete(); showMobileTools = false">删除章节</button>
+          </div>
+        </div>
 
         <!-- 编辑器主体 -->
         <div class="editor-wrapper">
@@ -1702,6 +1737,7 @@ const reviewText = computed({
 .write-layout {
   display: flex;
   height: 100%;
+  min-height: 100vh;
   width: 100%;
   overflow: hidden;
   background-color: #f8f6f1;
@@ -1710,6 +1746,7 @@ const reviewText = computed({
 /* ─── Chapter Sidebar ─── */
 .chapter-nav {
   width: 280px;
+  max-height: 100vh;
   border-right: 1px solid #e8e4da;
   background: linear-gradient(180deg, #fdfcf9 0%, #f5f2eb 100%);
   display: flex;
@@ -1743,6 +1780,20 @@ const reviewText = computed({
   justify-content: space-between;
   border-bottom: 1px solid #e8e4da;
   background: rgba(255, 255, 255, 0.5);
+}
+
+.nav-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chapter-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(2px);
+  z-index: 19;
 }
 
 .nav-title {
@@ -1977,6 +2028,7 @@ const reviewText = computed({
   margin: 0 auto;
   width: 100%;
   position: relative;
+  min-height: 0;
 }
 
 /* ─── Toolbar ─── */
@@ -2036,6 +2088,67 @@ const reviewText = computed({
   align-items: center;
   justify-content: flex-start;
   gap: 0.5rem;
+}
+
+.title-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.title-copy-btn {
+  flex-shrink: 0;
+}
+
+.mobile-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.toolbar-chip {
+  border: 1px solid #e0dbd2;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(8px);
+  border-radius: 999px;
+  padding: 0.42rem 0.8rem;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.toolbar-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.toolbar-chip-nav {
+  margin-right: 0.55rem;
+  flex-shrink: 0;
+}
+
+.toolbar-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  padding: 0.42rem;
+}
+
+.chapter-title-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: #9c958a;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .title-label {
@@ -2099,6 +2212,8 @@ const reviewText = computed({
   overflow: hidden;
   background: linear-gradient(180deg, #fdfcf9 0%, #faf8f3 100%);
   position: relative;
+  min-height: 0;
+  height: 100%;
 }
 
 .editor-wrapper::before {
@@ -2269,11 +2384,69 @@ const reviewText = computed({
   justify-content: center;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
 .expand-sidebar-btn:hover {
   background: white;
   color: var(--primary);
   box-shadow: 0 4px 16px rgba(139, 115, 85, 0.12);
   transform: translateY(-1px);
+}
+
+.mobile-tools-toggle {
+  position: absolute;
+  right: 1rem;
+  top: 1.2rem;
+  z-index: 50;
+  border: 1px solid #e0dbd2;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(8px);
+  border-radius: 999px;
+  padding: 0.42rem 0.8rem;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.mobile-tools-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  z-index: 39;
+}
+
+.mobile-tools-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  background: #fffdf9;
+  border-top-left-radius: 18px;
+  border-top-right-radius: 18px;
+  box-shadow: 0 -10px 32px rgba(15, 23, 42, 0.14);
+  padding: 0.9rem 0.85rem 1rem;
+}
+
+.mobile-tools-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.mobile-tools-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.mobile-tools-grid .btn {
+  width: 100%;
+  min-height: 40px;
+  justify-content: center;
+  font-size: 0.76rem;
+  padding: 0.42rem 0.45rem;
 }
 
 /* ─── Status Toast ─── */
@@ -2591,19 +2764,166 @@ const reviewText = computed({
 }
 
 /* ─── Responsive ─── */
+@media (max-width: 900px) {
+  .chapter-nav {
+    width: 248px;
+  }
+
+  .review-panel {
+    width: 320px;
+  }
+
+  .editor-container {
+    max-width: 100%;
+  }
+
+  .editor-toolbar {
+    padding: 0.8rem 1rem 0.7rem;
+  }
+
+  .toolbar-row {
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-actions {
+    align-items: stretch;
+    gap: 0.45rem;
+  }
+
+  .toolbar-group {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .toolbar-group-end {
+    margin-left: 0;
+  }
+
+  .toolbar-divider {
+    display: none;
+  }
+
+  .word-count-badge {
+    margin-left: auto;
+  }
+
+  .main-textarea {
+    padding: 1.75rem 2rem;
+    font-size: 1rem;
+  }
+}
+
 @media (max-width: 768px) {
+  .write-layout {
+    position: relative;
+  }
+
   .chapter-nav {
     position: absolute;
+    top: 0;
+    left: 0;
     height: 100%;
     z-index: 20;
     box-shadow: 4px 0 24px rgba(0, 0, 0, 0.08);
+    background: linear-gradient(180deg, #fdfcf9 0%, #f5f2eb 100%);
+  }
+  .chapter-nav.mobile-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(86vw, 320px);
+    max-width: 320px;
+    height: 100dvh;
+    z-index: 20;
+    box-shadow: 10px 0 32px rgba(15, 23, 42, 0.18);
   }
   .chapter-nav.collapsed { width: 0; border: none; box-shadow: none; }
   .editor-wrapper { padding: 0; }
-  .editor-toolbar { padding: 0.625rem 1rem 0.5rem; }
-  .toolbar-actions { flex-wrap: wrap; }
-  .title-input { font-size: 1.125rem; }
-  .main-textarea { padding: 1.5rem 1.25rem; }
+  .editor-toolbar { padding: 0.58rem 0.68rem 0.38rem; }
+  .editor-area { min-height: 0; height: 100%; }
+  .editor-container { min-height: 0; height: 100%; }
+  .editor-wrapper { min-height: 0; flex: 1 1 auto; }
+  .toolbar-row-mobile-head {
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 0.45rem;
+  }
+  .toolbar-row-mobile-head .toolbar-left {
+    flex: 0 1 auto;
+    width: 100%;
+  }
+  .toolbar-row-mobile-head .word-count-badge {
+    margin-left: 0;
+    align-self: flex-start;
+  }
+  .title-field,
+  .title-header,
+  .title-input-row,
+  .mobile-title-actions {
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+  .title-header {
+    gap: 0.28rem;
+  }
+  .chapter-title-toggle {
+    margin-top: 0.01rem;
+  }
+  .title-input-row { gap: 0.38rem; }
+  .title-copy-btn { padding: 0.3rem 0.55rem; font-size: 0.72rem; }
+  .mobile-title-actions { margin-top: 0.38rem; }
+  .toolbar-chip { padding: 0.38rem 0.72rem; font-size: 0.72rem; }
+  .mobile-tools-toggle { display: none; }
+  .toolbar-actions { flex-wrap: wrap; gap: 0.4rem; }
+  .toolbar-actions.compact .toolbar-group-secondary { display: none; }
+  .toolbar-group,
+  .toolbar-group-end {
+    width: 100%;
+  }
+  .toolbar-group-primary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+  .toolbar-group-primary .btn {
+    width: 100%;
+    min-height: 38px;
+    justify-content: center;
+    padding: 0.42rem 0.5rem;
+    font-size: 0.78rem;
+  }
+  .toolbar-group-secondary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+  }
+  .toolbar-group-secondary .btn {
+    width: 100%;
+    min-height: 36px;
+    justify-content: center;
+    padding: 0.38rem 0.45rem;
+    font-size: 0.74rem;
+  }
+  .toolbar-group-secondary .img-btn-ghost {
+    min-width: 36px;
+    padding: 0.38rem;
+  }
+  .title-header {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .title-header .btn {
+    min-height: 32px;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.74rem;
+  }
+  .title-input { font-size: 1rem; }
+  .word-count-badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+  }
+  .main-textarea { padding: 0.72rem 0.78rem 1.1rem; font-size: 0.98rem; line-height: 1.8; }
 
   .editor-area {
     flex-direction: column;
@@ -2616,6 +2936,7 @@ const reviewText = computed({
     border-left: none;
     border-top: 1px solid #e8e4da;
     box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.06);
+    padding: 1rem 0.85rem;
   }
 
   .review-slide-enter-from,
@@ -2624,5 +2945,100 @@ const reviewText = computed({
   }
 
   .editor-wrapper::before { display: none; }
+
+  .modal-overlay {
+    padding: 0.75rem;
+    align-items: flex-end;
+  }
+
+  .modal-content,
+  .ending-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100vh - 1rem);
+    border-radius: 18px 18px 0 0;
+    padding: 1rem;
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .modal-actions .btn {
+    width: 100%;
+  }
+
+  .status-toast {
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    max-width: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .nav-header {
+    padding: 1rem 1rem 0.8rem;
+  }
+
+  .chapter-list {
+    padding: 0.45rem 0.5rem;
+  }
+
+  .chapter-item,
+  .volume-header {
+    min-height: 42px;
+  }
+
+  .editor-toolbar {
+    padding: 0.65rem 0.68rem 0.48rem;
+  }
+
+  .toolbar-row {
+    gap: 0.45rem;
+  }
+
+  .word-count-badge {
+    margin-left: 0;
+  }
+
+  .toolbar-group-primary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.3rem;
+  }
+
+  .toolbar-group-primary .btn {
+    min-height: 36px;
+    font-size: 0.74rem;
+    padding: 0.34rem 0.35rem;
+  }
+
+  .toolbar-group-secondary {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.3rem;
+  }
+
+  .toolbar-group-secondary .btn {
+    min-height: 34px;
+    font-size: 0.7rem;
+    padding: 0.32rem 0.34rem;
+  }
+
+  .main-textarea {
+    padding: 0.8rem 0.72rem 1.15rem;
+    font-size: 0.96rem;
+  }
+
+  .expand-sidebar-btn {
+    left: 0.68rem;
+    top: 0.82rem;
+  }
+
+  .mobile-tools-toggle {
+    right: 0.68rem;
+    top: 0.82rem;
+    padding: 0.36rem 0.68rem;
+    font-size: 0.68rem;
+  }
 }
 </style>

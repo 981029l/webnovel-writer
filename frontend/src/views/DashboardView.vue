@@ -538,4 +538,210 @@ h1, h2, h3, p { margin: 0; }
 .init-guide-card .btn {
   gap: 0.375rem;
 }
+@media (max-width: 900px) {
+  .dashboard-scroll-container {
+    padding: 1.5rem 1rem;
+  }
+
+  .welcome-text {
+    font-size: 1.85rem;
+  }
+
+  .project-info {
+    font-size: 0.96rem;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .main-content-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .content-left,
+  .content-right {
+    gap: 1rem;
+  }
+
+  .premium-card,
+  .init-guide-card {
+    padding: 1.2rem;
+    border-radius: 18px;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-scroll-container {
+    padding: 0.75rem 0.65rem 1rem;
+  }
+
+  .header-section {
+    margin-bottom: 1rem;
+  }
+
+  .welcome-text {
+    font-size: 1.28rem;
+    gap: 0.42rem;
+    align-items: flex-start;
+    margin-bottom: 0.3rem;
+  }
+
+  .welcome-icon {
+    width: 1.7rem;
+    height: 1.7rem;
+    flex-shrink: 0;
+    margin-top: 0.02rem;
+  }
+
+  .project-info {
+    font-size: 0.88rem;
+  }
+
+  .project-name {
+    display: inline-block;
+    margin-top: 0.15rem;
+    max-width: 100%;
+    word-break: break-word;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+    gap: 0.65rem;
+    margin-bottom: 1rem;
+  }
+
+  .stat-card {
+    padding: 0.82rem 0.9rem;
+    border-radius: 14px;
+    gap: 0.85rem;
+  }
+
+  .stat-icon-wrapper {
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 10px;
+    font-size: 1rem;
+  }
+
+  .stat-value {
+    font-size: 1.12rem;
+  }
+
+  .stat-key {
+    font-size: 0.74rem;
+  }
+
+  .actions-grid {
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+  }
+
+  .action-item {
+    padding: 0.82rem 0.9rem;
+    align-items: center;
+    gap: 0.75rem;
+    border-radius: 12px;
+  }
+
+  .action-icon-box {
+    width: 2.45rem;
+    height: 2.45rem;
+    border-radius: 10px;
+  }
+
+  .action-label {
+    font-size: 0.92rem;
+  }
+
+  .action-desc {
+    font-size: 0.72rem;
+  }
+
+  .premium-card,
+  .init-guide-card {
+    padding: 0.95rem;
+    border-radius: 16px;
+  }
+
+  .card-title {
+    font-size: 1rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.45rem;
+  }
+
+  .goal-target {
+    align-self: flex-start;
+    font-size: 0.78rem;
+  }
+
+  .goal-hint {
+    font-size: 0.82rem;
+  }
+
+  .timeline-item {
+    padding-left: 1rem;
+    padding-bottom: 0.8rem;
+  }
+
+  .timeline-line {
+    left: 6px;
+    top: 18px;
+  }
+
+  .timeline-marker {
+    width: 14px;
+    height: 14px;
+  }
+
+  .marker-dot {
+    width: 7px;
+    height: 7px;
+  }
+
+  .timeline-header {
+    flex-direction: column;
+    gap: 0.18rem;
+  }
+
+  .timeline-title {
+    font-size: 0.86rem;
+  }
+
+  .timeline-time {
+    margin-top: 0;
+    font-size: 0.7rem;
+  }
+
+  .timeline-content {
+    padding: 0.72rem 0.75rem;
+    border-radius: 10px;
+  }
+
+  .type-badge {
+    font-size: 0.68rem;
+    padding: 2px 6px;
+  }
+
+  .init-guide {
+    padding: 0.6rem 0 0.35rem;
+  }
+
+  .init-guide-card {
+    padding: 1.2rem 0.9rem;
+  }
+
+  .init-guide-card .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
 </style>

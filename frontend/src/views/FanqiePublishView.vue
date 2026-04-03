@@ -660,4 +660,164 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 .spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-state { text-align: center; padding: 2.5rem 1rem; color: var(--text-muted); display: flex; flex-direction: column; align-items: center; gap: 0.75rem; }
+
+@media (max-width: 768px) {
+  .fanqie-layout {
+    min-height: 100vh;
+    padding-bottom: 2rem;
+  }
+
+  .fanqie-container {
+    padding: 0 0.9rem;
+  }
+
+  .page-header {
+    padding: 1rem 0 0.9rem;
+  }
+
+  .page-header-top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .page-title {
+    font-size: 1.35rem;
+    line-height: 1.2;
+  }
+
+  .page-subtitle {
+    font-size: 0.84rem;
+  }
+
+  .card {
+    padding: 0.95rem;
+    border-radius: 12px;
+    margin-bottom: 0.9rem;
+  }
+
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.65rem;
+  }
+
+  .header-actions,
+  .publish-btns,
+  .account-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem;
+  }
+
+  .header-actions .btn,
+  .publish-btns .btn,
+  .account-actions .btn,
+  .account-actions a.btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .account-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.75rem;
+  }
+
+  .account-info {
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+
+  .add-account-form,
+  .config-input-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .config-input-group .btn,
+  .add-account-form .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .book-chips {
+    gap: 0.4rem;
+  }
+
+  .book-chip {
+    font-size: 0.78rem;
+    padding: 0.35rem 0.72rem;
+  }
+
+  .chapter-table-wrap {
+    border: none;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .chapter-table,
+  .chapter-table thead,
+  .chapter-table tbody,
+  .chapter-table th,
+  .chapter-table td,
+  .chapter-table tr {
+    display: block;
+    width: 100%;
+  }
+
+  .chapter-table thead {
+    display: none;
+  }
+
+  .chapter-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  .chapter-table tr {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--bg-card);
+    padding: 0.75rem 0.8rem;
+  }
+
+  .chapter-table td {
+    border: none;
+    padding: 0.18rem 0;
+  }
+
+  .chapter-table td::before {
+    display: inline-block;
+    min-width: 3.6rem;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
+  .chapter-table .col-check::before { content: '选择'; }
+  .chapter-table .col-id::before { content: '章节'; }
+  .chapter-table .col-title::before { content: '标题'; }
+  .chapter-table .col-words::before { content: '字数'; }
+  .chapter-table .col-status::before { content: '状态'; }
+
+  .publish-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .publish-progress {
+    padding: 0.9rem;
+  }
+
+  .qr-screenshot {
+    max-width: min(72vw, 260px);
+    max-height: min(72vw, 260px);
+  }
+}
+
 </style>
