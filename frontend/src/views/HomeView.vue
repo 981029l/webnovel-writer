@@ -395,10 +395,11 @@ function getGenreIcon(genre) {
 <style scoped>
 .home-page {
   height: 100%;
+  min-height: 100vh;
   width: 100%;
   display: flex;
   flex-direction: column;
-  background-color: var(--bg-background);
+  background: linear-gradient(180deg, #fbfaf7 0%, #f6f2ea 100%);
   overflow-y: auto;
 }
 
@@ -407,40 +408,47 @@ function getGenreIcon(genre) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.25rem 2.5rem;
-  background: white;
+  padding: 1.1rem 2rem;
+  background: rgba(255,255,255,0.82);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  backdrop-filter: blur(12px);
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 .top-bar-left {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .logo-icon {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.65rem;
+  height: 1.65rem;
   color: var(--primary);
+  flex-shrink: 0;
 }
 
 .logo-text {
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   font-weight: 700;
   background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  white-space: nowrap;
 }
 
 /* Main Content */
 .home-content {
   flex: 1;
-  max-width: 1200px;
+  max-width: 1240px;
   width: 100%;
   margin: 0 auto;
-  padding: 2.5rem;
+  padding: 2rem;
 }
 
 /* Title Row */
@@ -448,11 +456,13 @@ function getGenreIcon(genre) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 2rem;
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+  flex-wrap: wrap;
 }
 
 .page-title {
-  font-size: 1.75rem;
+  font-size: clamp(1.5rem, 4vw, 1.9rem);
   font-weight: 800;
   color: var(--text-primary);
   letter-spacing: -0.02em;
@@ -461,6 +471,7 @@ function getGenreIcon(genre) {
 .title-actions {
   display: flex;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .title-actions .btn {
@@ -470,26 +481,28 @@ function getGenreIcon(genre) {
 /* Projects Grid */
 .projects-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
 }
 
 .project-card {
-  background: white;
-  border-radius: 16px;
-  padding: 1.5rem;
-  border: 1px solid rgba(229, 231, 235, 0.6);
-  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.04);
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(10px);
+  border-radius: 20px;
+  padding: 1.2rem;
+  border: 1px solid rgba(224, 219, 210, 0.8);
+  box-shadow: 0 8px 24px -10px rgba(44, 40, 37, 0.10);
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.8rem;
+  min-width: 0;
 }
 
 .project-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 12px 24px -4px rgba(99, 102, 241, 0.12);
+  box-shadow: 0 16px 32px -12px rgba(99, 102, 241, 0.16);
   border-color: var(--border-hover);
 }
 
@@ -502,17 +515,19 @@ function getGenreIcon(genre) {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 0.75rem;
 }
 
 .card-genre-icon {
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: 10px;
+  border-radius: 14px;
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(129, 140, 248, 0.06));
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--primary);
+  flex-shrink: 0;
 }
 
 .card-genre-icon svg {
@@ -526,12 +541,13 @@ function getGenreIcon(genre) {
   color: var(--text-muted);
   cursor: pointer;
   padding: 0.375rem;
-  border-radius: 6px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .project-card:hover .card-delete-btn {
@@ -544,19 +560,20 @@ function getGenreIcon(genre) {
 }
 
 .card-title {
-  font-size: 1.125rem;
+  font-size: 1.08rem;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
-  line-height: 1.3;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .card-genre-tag {
   display: inline-flex;
   align-self: flex-start;
   font-size: 0.75rem;
-  font-weight: 500;
-  padding: 0.125rem 0.5rem;
+  font-weight: 600;
+  padding: 0.22rem 0.6rem;
   border-radius: 999px;
   background: rgba(99, 102, 241, 0.08);
   color: var(--primary);
@@ -564,7 +581,8 @@ function getGenreIcon(genre) {
 
 .card-meta {
   display: flex;
-  gap: 1rem;
+  gap: 0.8rem;
+  flex-wrap: wrap;
 }
 
 .meta-item {
@@ -581,8 +599,8 @@ function getGenreIcon(genre) {
 
 .card-footer {
   margin-top: auto;
-  padding-top: 0.75rem;
-  border-top: 1px solid rgba(229, 231, 235, 0.5);
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(229, 231, 235, 0.6);
 }
 
 .card-date {
@@ -598,9 +616,10 @@ function getGenreIcon(genre) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4rem 2rem;
+  padding: 4rem 1.5rem;
   color: var(--text-muted);
   gap: 1rem;
+  text-align: center;
 }
 
 .spinner {
@@ -637,7 +656,7 @@ function getGenreIcon(genre) {
 /* Modal Styling */
 .modal-overlay {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  inset: 0;
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(8px);
   display: flex;
@@ -645,6 +664,7 @@ function getGenreIcon(genre) {
   justify-content: center;
   z-index: 100;
   animation: fadeIn 0.2s ease-out;
+  padding: 1rem;
 }
 
 @keyframes fadeIn {
@@ -654,10 +674,12 @@ function getGenreIcon(genre) {
 
 .modal {
   background: white;
-  border-radius: var(--radius-xl);
-  padding: 2rem;
+  border-radius: 20px;
+  padding: 1.5rem;
   width: 100%;
-  max-width: 500px;
+  max-width: 520px;
+  max-height: min(90vh, 760px);
+  overflow: auto;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   border: 1px solid var(--border);
   animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -673,12 +695,13 @@ function getGenreIcon(genre) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
 }
 
 .modal h3 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -694,6 +717,7 @@ function getGenreIcon(genre) {
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .close-btn:hover {
@@ -702,7 +726,7 @@ function getGenreIcon(genre) {
 }
 
 .form-group {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.2rem;
 }
 
 .form-group label {
@@ -715,10 +739,10 @@ function getGenreIcon(genre) {
 
 .input {
   width: 100%;
-  padding: 0.625rem 0.75rem;
+  padding: 0.75rem 0.875rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.875rem;
+  border-radius: 14px;
+  font-size: 0.92rem;
   color: var(--text-primary);
   background: white;
   transition: border-color 0.2s;
@@ -740,10 +764,11 @@ function getGenreIcon(genre) {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 1rem;
-  margin-top: 2.5rem;
-  padding-top: 1.5rem;
+  gap: 0.75rem;
+  margin-top: 2rem;
+  padding-top: 1.25rem;
   border-top: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
 /* Advanced toggle */
@@ -769,5 +794,83 @@ function getGenreIcon(genre) {
 
 .advanced-toggle .rotate-90 {
   transform: rotate(90deg);
+}
+
+@media (max-width: 900px) {
+  .top-bar {
+    padding: 1rem 1rem 0.9rem;
+  }
+
+  .home-content {
+    padding: 1.25rem 1rem 1.5rem;
+  }
+
+  .title-row {
+    align-items: stretch;
+  }
+
+  .title-actions {
+    width: 100%;
+  }
+
+  .title-actions .btn {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .top-bar {
+    padding: 0.9rem 0.875rem;
+  }
+
+  .logo-text {
+    font-size: 1.05rem;
+  }
+
+  .home-content {
+    padding: 1rem 0.875rem 1.2rem;
+  }
+
+  .projects-grid {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+
+  .project-card {
+    padding: 1rem;
+    border-radius: 18px;
+  }
+
+  .project-card .card-delete-btn {
+    opacity: 1;
+  }
+
+  .card-meta {
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .title-actions {
+    flex-direction: column;
+  }
+
+  .title-actions .btn {
+    width: 100%;
+  }
+
+  .modal {
+    padding: 1.1rem;
+    border-radius: 18px;
+    max-height: calc(100vh - 2rem);
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .modal-actions .btn {
+    width: 100%;
+  }
 }
 </style>

@@ -50,11 +50,13 @@ body {
     background-color: var(--bg-background);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
 }
 
 #app {
-    height: 100vh;
-    width: 100vw;
+    min-height: 100vh;
+    width: 100%;
     display: flex;
     flex-direction: column;
 }
@@ -136,8 +138,9 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0.5rem 1rem;
-    border-radius: var(--radius-md);
+    padding: 0.65rem 1rem;
+    min-height: 42px;
+    border-radius: 12px;
     font-weight: 500;
     font-size: 0.875rem;
     cursor: pointer;

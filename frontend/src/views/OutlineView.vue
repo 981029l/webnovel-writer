@@ -1,7 +1,7 @@
 <!-- Copyright (c) 2026 左岚. All rights reserved. -->
 <!-- OutlineView.vue - 现代化大纲编辑页面 -->
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { outlinesApi, aiApi } from '../api'
 import { useAiTaskStore } from '../stores/aiTask'
 import { useProjectStore } from '../stores/project'
@@ -17,6 +17,13 @@ const saving = ref(false)
 const aiPlanning = ref(false)
 const message = ref('')
 const showSidebar = ref(true)
+const isMobileViewport = ref(false)
+
+function syncViewport() {
+  if (typeof window === 'undefined') return
+  isMobileViewport.value = window.innerWidth < 768
+  if (!isMobileViewport.value) showSidebar.value = true
+}
 
 // View Mode: 'text' or 'kanban'
 const viewMode = ref('text')
@@ -35,6 +42,8 @@ const projectStore = useProjectStore()
 const aiTaskStore = useAiTaskStore()
 
 onMounted(async () => {
+    syncViewport()
+    window.addEventListener('resize', syncViewport)
     await loadOutlines()
     
     // 如果正在初始化，保持 AI 状态
@@ -44,6 +53,10 @@ onMounted(async () => {
              editContent.value = aiTaskStore.streamContent
         }
     }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', syncViewport)
 })
 
 // === Sync Logic ===
@@ -402,16 +415,22 @@ async function executeAiPolish(volume, requirements) {
 <template>
   <div class="outline-layout backend-bg">
     <!-- 左侧导航栏 -->
-    <aside class="outline-sidebar" :class="{ collapsed: !showSidebar }">
+    <div v-if="showSidebar && isMobileViewport" class="outline-sidebar-backdrop" @click="showSidebar = false"></div>
+    <aside class="outline-sidebar" :class="{ collapsed: !showSidebar, mobileOverlay: isMobileViewport }">
       <div class="sidebar-header">
         <div class="header-row">
             <h2 class="sidebar-title">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5 mr-2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
             大纲目录
             </h2>
-            <button class="icon-btn sidebar-btn" @click="createNewVolume" title="新建卷" v-if="!aiTaskStore.isRunning">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-            </button>
+            <div class="outline-sidebar-actions">
+              <button class="icon-btn sidebar-btn" @click="createNewVolume" title="新建卷" v-if="!aiTaskStore.isRunning">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              </button>
+              <button v-if="isMobileViewport" class="icon-btn sidebar-btn" @click="showSidebar = false" title="关闭目录">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
         </div>
         
         <!-- 初始化状态指示 -->
@@ -467,15 +486,37 @@ async function executeAiPolish(volume, requirements) {
         <!-- 顶部工具栏 -->
         <header class="editor-header">
           <div class="header-left">
-            <h2 class="volume-title">
-              {{ selectedVolume === 'total' ? '全书总纲' : `第 ${selectedVolume} 卷大纲` }}
-            </h2>
+            <div class="outline-mobile-title-row">
+              <button v-if="isMobileViewport && !showSidebar" class="outline-mobile-nav-btn" @click="showSidebar = true" title="打开大纲目录">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+              </button>
+              <h2 class="volume-title">
+                {{ selectedVolume === 'total' ? '全书总纲' : `第 ${selectedVolume} 卷大纲` }}
+              </h2>
+            </div>
             <span v-if="aiPlanning" class="ai-status">
               <span class="pulse-dot"></span> AI 演算中...
             </span>
+            <div v-if="isMobileViewport" class="outline-mobile-actions">
+              <div class="view-toggle tabs-panel">
+                  <button :class="{'active': viewMode === 'text'}" @click="viewMode = 'text'" title="文本编辑视图">文本</button>
+                  <button :class="{'active': viewMode === 'kanban'}" @click="viewMode = 'kanban'" title="看板拖拽视图">看板</button>
+              </div>
+              <div class="outline-mobile-action-row">
+                <button class="btn btn-ai outline-btn" @click="aiPlanVolume" :disabled="aiPlanning">
+                  {{ selectedVolume === 'total' ? 'AI规划' : '规划本卷' }}
+                </button>
+                <button class="btn btn-secondary outline-btn" @click="polishOutline" :disabled="aiPlanning || !editContent" title="润色当前大纲">
+                  润色
+                </button>
+                <button class="btn btn-primary primary-btn" @click="saveOutline" :disabled="saving">
+                  {{ saving ? '保存中' : '保存' }}
+                </button>
+              </div>
+            </div>
           </div>
           
-          <div class="header-actions">
+          <div v-if="!isMobileViewport" class="header-actions">
             <!-- 视图切换 -->
             <div class="view-toggle tabs-panel">
                 <button :class="{'active': viewMode === 'text'}" @click="viewMode = 'text'" title="文本编辑视图">📄 文本</button>
@@ -647,6 +688,12 @@ async function executeAiPolish(volume, requirements) {
 }
 .outline-sidebar.collapsed { width: 0; border: none; overflow: hidden; }
 .outline-sidebar.collapsed * { display: none; }
+.outline-sidebar.mobileOverlay.collapsed {
+  transform: translateX(-100%);
+  width: min(86vw, 320px);
+  border-right: 1px solid #e5e7eb;
+  pointer-events: none;
+}
 
 .sidebar-header {
   padding: 1.5rem;
@@ -661,6 +708,12 @@ async function executeAiPolish(volume, requirements) {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+}
+
+.outline-sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .sidebar-title {
@@ -1099,4 +1152,182 @@ async function executeAiPolish(volume, requirements) {
 .empty-icon { font-size: 4rem; margin-bottom: 1rem; color: #9ca3af; }
 .empty-content h3 { font-size: 1.5rem; margin-bottom: 0.8rem; color: #111827; }
 .empty-content p { color: #6b7280; margin-bottom: 2rem; line-height: 1.6; }
+
+.outline-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  z-index: 19;
+}
+
+@media (max-width: 768px) {
+  .outline-layout {
+    min-height: 100vh;
+    position: relative;
+  }
+
+  .outline-sidebar.mobileOverlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(86vw, 320px);
+    max-width: 320px;
+    height: 100vh;
+    max-height: 100vh;
+    z-index: 20;
+    box-shadow: 10px 0 32px rgba(15, 23, 42, 0.18);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    transform: translateX(0);
+    transition: transform 0.24s ease;
+  }
+
+  .outline-main {
+    min-width: 0;
+  }
+
+  .editor-container {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .editor-header {
+    padding: 0.9rem 0.9rem 0.75rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.8rem;
+  }
+
+  .header-left {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .outline-mobile-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.28rem;
+  }
+
+  .outline-mobile-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .outline-mobile-actions {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .outline-mobile-action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .volume-title {
+    font-size: 1.2rem;
+  }
+
+  .ai-status {
+    margin-left: 0;
+    font-size: 0.8rem;
+  }
+
+  .header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+
+  .tabs-panel {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .outline-mobile-actions .tabs-panel {
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .tabs-panel button,
+  .outline-btn,
+  .primary-btn {
+    font-size: 0.82rem;
+  }
+
+  .outline-mobile-action-row .outline-btn,
+  .outline-mobile-action-row .primary-btn {
+    width: 100%;
+    justify-content: center;
+    padding: 0.62rem 0.45rem;
+  }
+
+  .sidebar-header {
+    padding: 1rem 0.95rem 0.85rem;
+  }
+
+  .outline-list {
+    padding: 0.7rem 0.75rem;
+  }
+
+  .outline-item {
+    padding: 0.72rem 0.82rem;
+    margin-bottom: 0.28rem;
+    border-radius: 10px;
+  }
+
+  .item-title {
+    font-size: 0.85rem;
+  }
+
+  .sidebar-footer {
+    display: none;
+  }
+
+  .editor-wrapper {
+    min-height: calc(100vh - 180px);
+  }
+
+  .text-editor-box {
+    padding: 1rem 0.95rem 1.4rem;
+    font-size: 0.96rem;
+    line-height: 1.7;
+  }
+
+  .kanban-board {
+    padding: 1rem 0.9rem 1.25rem;
+  }
+
+  .kanban-column {
+    min-width: 100%;
+  }
+
+  .toast-message {
+    width: calc(100% - 1.5rem);
+    max-width: 420px;
+    bottom: 1rem;
+    font-size: 0.82rem;
+    padding: 0.7rem 1rem;
+  }
+
+  .theme-empty {
+    margin: 1rem;
+    padding: 1.6rem 1.1rem;
+  }
+}
 </style>

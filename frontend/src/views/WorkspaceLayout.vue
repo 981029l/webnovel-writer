@@ -3,11 +3,60 @@
 <script setup>
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useProjectStore } from '../stores/project'
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
+const isMobileViewport = ref(false)
+const showMobileWorkspaceNav = ref(false)
+const floatingMenuPos = ref({ x: 0, y: 0 })
+const isDraggingMenu = ref(false)
+let dragOffsetX = 0
+let dragOffsetY = 0
+
+function clampFloatingMenu() {
+  if (typeof window === 'undefined') return
+  const maxX = Math.max(12, window.innerWidth - 64)
+  const maxY = Math.max(12, window.innerHeight - 64)
+  floatingMenuPos.value = {
+    x: Math.min(Math.max(12, floatingMenuPos.value.x), maxX),
+    y: Math.min(Math.max(12, floatingMenuPos.value.y), maxY)
+  }
+}
+
+function setDefaultFloatingMenuPos() {
+  if (typeof window === 'undefined') return
+  floatingMenuPos.value = { x: window.innerWidth - 68, y: window.innerHeight - 84 }
+  clampFloatingMenu()
+}
+
+function onFloatingMenuPointerMove(event) {
+  if (!isDraggingMenu.value) return
+  floatingMenuPos.value = { x: event.clientX - dragOffsetX, y: event.clientY - dragOffsetY }
+  clampFloatingMenu()
+}
+
+function stopFloatingMenuDrag() {
+  isDraggingMenu.value = false
+}
+
+function startFloatingMenuDrag(event) {
+  isDraggingMenu.value = true
+  dragOffsetX = event.clientX - floatingMenuPos.value.x
+  dragOffsetY = event.clientY - floatingMenuPos.value.y
+}
+
+function syncMobileWorkspaceLayout() {
+  if (typeof window === 'undefined') return
+  isMobileViewport.value = window.innerWidth <= 768
+  if (!isMobileViewport.value) {
+    showMobileWorkspaceNav.value = false
+  } else if (!floatingMenuPos.value.x && !floatingMenuPos.value.y) {
+    setDefaultFloatingMenuPos()
+  }
+  clampFloatingMenu()
+}
 
 onMounted(() => {
   // Only fetch if store doesn't already have data (e.g., page refresh)
@@ -15,6 +64,17 @@ onMounted(() => {
   if (projectStore.projectRoot && !projectStore.title) {
     projectStore.fetchStatus()
   }
+  syncMobileWorkspaceLayout()
+  if (isMobileViewport.value) setDefaultFloatingMenuPos()
+  window.addEventListener('resize', syncMobileWorkspaceLayout)
+  window.addEventListener('pointermove', onFloatingMenuPointerMove)
+  window.addEventListener('pointerup', stopFloatingMenuDrag)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', syncMobileWorkspaceLayout)
+  window.removeEventListener('pointermove', onFloatingMenuPointerMove)
+  window.removeEventListener('pointerup', stopFloatingMenuDrag)
 })
 
 const navItems = [
@@ -75,6 +135,10 @@ function goBackToProjects() {
   router.push('/')
 }
 
+function closeMobileWorkspaceNav() {
+  if (isMobileViewport.value) showMobileWorkspaceNav.value = false
+}
+
 function isActiveRoute(itemPath) {
   if (itemPath === '/workspace/dashboard') {
     return route.path === '/workspace/dashboard'
@@ -85,16 +149,18 @@ function isActiveRoute(itemPath) {
 
 <template>
   <div class="workspace-layout">
+    <div v-if="isMobileViewport && showMobileWorkspaceNav" class="workspace-mobile-backdrop" @click="showMobileWorkspaceNav = false"></div>
+
     <!-- Sidebar -->
-    <aside class="sidebar">
+    <aside class="sidebar" :class="{ 'mobile-overlay': isMobileViewport, 'mobile-open': showMobileWorkspaceNav }">
       <div class="sidebar-header">
-        <!-- Back to project list -->
-        <button class="back-btn" @click="goBackToProjects">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-          </svg>
-          <span>返回项目列表</span>
-        </button>
+        <div class="sidebar-header-row sidebar-header-row-end">
+          <button v-if="isMobileViewport" class="mobile-close-btn" @click="showMobileWorkspaceNav = false" title="关闭导航">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <!-- Current project name -->
@@ -114,6 +180,7 @@ function isActiveRoute(itemPath) {
           :key="item.path"
           :to="item.path"
           class="nav-item"
+          @click="closeMobileWorkspaceNav"
           :class="{ active: isActiveRoute(item.path) }"
         >
           <span class="nav-icon" v-html="item.icon"></span>
@@ -140,6 +207,14 @@ function isActiveRoute(itemPath) {
 
     <!-- Main Content -->
     <main class="main-content">
+      <button
+        v-if="isMobileViewport && !showMobileWorkspaceNav"
+        class="workspace-mobile-menu-btn"
+        :style="{ left: `${floatingMenuPos.x}px`, top: `${floatingMenuPos.y}px` }"
+        @click="!isDraggingMenu && (showMobileWorkspaceNav = true)"
+        @pointerdown.prevent="startFloatingMenuDrag"
+        title="打开全局导航"
+      >☰</button>
       <div class="content-container">
         <RouterView />
       </div>
@@ -150,6 +225,7 @@ function isActiveRoute(itemPath) {
 <style scoped>
 .workspace-layout {
   display: flex;
+  min-height: 100vh;
   height: 100%;
   width: 100%;
   background-color: var(--bg-background);
@@ -157,6 +233,14 @@ function isActiveRoute(itemPath) {
 }
 
 /* Sidebar Styling */
+.workspace-mobile-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(2px);
+  z-index: 29;
+}
+
 .sidebar {
   width: var(--sidebar-width);
   height: 100%;
@@ -166,36 +250,26 @@ function isActiveRoute(itemPath) {
   border-right: 1px solid var(--sidebar-border);
   transition: all 0.3s ease;
   z-index: 10;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.3), 0 10px 30px rgba(15, 23, 42, 0.04);
 }
 
 .sidebar-header {
   padding: 1rem 1rem 0.75rem;
+  position: relative;
 }
 
-.back-btn {
+.sidebar-header-row {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  width: 100%;
-  padding: 0.625rem 0.75rem;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
+  gap: 0.55rem;
 }
 
-.back-btn:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--border-hover);
-  color: var(--primary);
+.sidebar-header-row-end {
+  justify-content: flex-end;
 }
 
-.back-btn svg {
-  flex-shrink: 0;
+.mobile-close-btn {
+  display: none;
 }
 
 /* Project Name */
@@ -207,9 +281,9 @@ function isActiveRoute(itemPath) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.75rem;
+  padding: 0.875rem;
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(129, 140, 248, 0.05));
-  border-radius: var(--radius-md);
+  border-radius: 16px;
   border: 1px solid rgba(99, 102, 241, 0.12);
 }
 
@@ -233,7 +307,7 @@ function isActiveRoute(itemPath) {
   padding: 0.5rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.375rem;
   overflow-y: auto;
 }
 
@@ -242,8 +316,8 @@ function isActiveRoute(itemPath) {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
+  border-radius: 14px;
   color: var(--text-secondary);
   text-decoration: none;
   font-weight: 500;
@@ -267,6 +341,7 @@ function isActiveRoute(itemPath) {
   align-items: center;
   justify-content: center;
   width: 1.5rem;
+  flex-shrink: 0;
 }
 
 .active-indicator {
@@ -282,7 +357,7 @@ function isActiveRoute(itemPath) {
 
 /* Footer */
 .sidebar-footer {
-  padding: 1.5rem;
+  padding: 1.25rem 1.5rem;
   border-top: 1px solid var(--border);
   background-color: var(--bg-secondary);
 }
@@ -304,6 +379,7 @@ function isActiveRoute(itemPath) {
   color: var(--text-muted);
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .project-empty {
@@ -318,10 +394,279 @@ function isActiveRoute(itemPath) {
   background-color: var(--bg-background);
   overflow: hidden;
   position: relative;
+  min-width: 0;
 }
 
 .content-container {
   width: 100%;
   height: 100%;
+}
+
+@media (max-width: 900px) {
+  .workspace-layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--sidebar-border);
+    box-shadow: none;
+  }
+
+  .sidebar-header {
+    padding: 0.875rem 0.875rem 0.5rem;
+  }
+
+  .project-name-wrapper {
+    padding: 0.25rem 0.875rem 0.75rem;
+  }
+
+  .sidebar-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: visible;
+    padding: 0 0.875rem 0.875rem;
+    gap: 0.5rem;
+  }
+
+  .nav-item {
+    min-width: 0;
+    width: 100%;
+    padding: 0.7rem 0.55rem;
+    gap: 0.32rem;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .nav-label {
+    white-space: nowrap;
+    font-size: 0.76rem;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+
+  .active-indicator {
+    left: 50%;
+    top: auto;
+    bottom: 0;
+    width: 46%;
+    height: 3px;
+    transform: translateX(-50%);
+    border-radius: 999px 999px 0 0;
+  }
+
+  .sidebar-footer {
+    display: none;
+  }
+
+  .main-content {
+    overflow: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar.mobile-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: min(86vw, 320px);
+    max-width: 320px;
+    height: 100dvh;
+    z-index: 30;
+    border-right: 1px solid var(--sidebar-border);
+    border-bottom: none;
+    transform: translateX(-100%);
+    transition: transform 0.24s ease;
+    box-shadow: 10px 0 32px rgba(15, 23, 42, 0.18);
+    background: rgba(255,255,255,0.98);
+    backdrop-filter: blur(12px);
+  }
+
+  .sidebar.mobile-overlay.mobile-open {
+    transform: translateX(0);
+  }
+
+  .mobile-close-btn {
+    position: static;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+  }
+
+  .workspace-mobile-menu-btn {
+    position: fixed;
+    z-index: 31;
+    width: 46px;
+    height: 46px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.94);
+    backdrop-filter: blur(8px);
+    border-radius: 999px;
+    padding: 0;
+    font-size: 1rem;
+    color: var(--text-secondary);
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .sidebar.mobile-overlay .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    grid-template-columns: none;
+    padding: 0 0.875rem 0.875rem;
+    gap: 0.45rem;
+    overflow-y: auto;
+  }
+
+  .sidebar.mobile-overlay .nav-item {
+    width: 100%;
+    min-width: 0;
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+    padding: 0.78rem 0.9rem;
+    gap: 0.7rem;
+  }
+
+  .sidebar.mobile-overlay .nav-label {
+    font-size: 0.82rem;
+    line-height: 1.2;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .sidebar.mobile-overlay .nav-icon {
+    width: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .sidebar.mobile-overlay .active-indicator {
+    left: 0;
+    top: 50%;
+    bottom: auto;
+    width: 3px;
+    height: 1.4rem;
+    transform: translateY(-50%);
+    border-radius: 0 4px 4px 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(12px);
+  }
+
+  .sidebar-header {
+    padding: 0.5rem 0.55rem 0.3rem;
+  }
+
+  .project-name-wrapper {
+    padding: 0 0.55rem 0.35rem;
+  }
+
+  .sidebar-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    padding: 0 0.55rem 0.45rem;
+    gap: 0.32rem;
+  }
+
+  .back-btn {
+    padding: 0.5rem 0.62rem;
+    font-size: 0.72rem;
+    border-radius: 10px;
+    flex: 1;
+  }
+
+  .project-name-display {
+    padding: 0.54rem 0.6rem;
+    border-radius: 10px;
+  }
+
+  .project-title {
+    font-size: 0.76rem;
+  }
+
+  .nav-item {
+    padding: 0.48rem 0.28rem;
+    border-radius: 10px;
+    gap: 0.22rem;
+  }
+
+  .nav-label {
+    font-size: 0.68rem;
+  }
+
+  .nav-icon {
+    width: 1rem;
+  }
+
+  .nav-icon :deep(svg) {
+    width: 0.92rem;
+    height: 0.92rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .sidebar-header {
+    padding: 0.45rem 0.5rem 0.28rem;
+  }
+
+  .project-name-wrapper {
+    padding: 0 0.5rem 0.32rem;
+  }
+
+  .sidebar-nav {
+    padding: 0 0.5rem 0.42rem;
+    gap: 0.28rem;
+  }
+
+  .back-btn {
+    padding: 0.46rem 0.58rem;
+    font-size: 0.7rem;
+  }
+
+  .project-name-display {
+    padding: 0.5rem 0.56rem;
+  }
+
+  .project-title {
+    font-size: 0.74rem;
+  }
+
+  .nav-item {
+    padding: 0.44rem 0.22rem;
+    gap: 0.18rem;
+  }
+
+  .nav-label {
+    font-size: 0.64rem;
+  }
+
+  .active-indicator {
+    width: 52%;
+  }
 }
 </style>
