@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-18T00:00:00+08:00",
+  "title": "Design System: Webnovel Writer",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "蓝笔 Primary", "canonical": "#2E63E8", "darkCanonical": "#3E6AE1", "tonalRamp": ["#0E2A6B", "#16399A", "#1E48B8", "#2557D1", "#2E63E8", "#5C8DF2", "#9DBCF8", "#EAF0FE"] },
+      "primary-tint": { "role": "primary", "displayName": "蓝笔洗", "canonical": "#EAF0FE", "darkCanonical": "#232F52" },
+      "bg": { "role": "neutral", "displayName": "画布", "canonical": "#F2F3F7", "darkCanonical": "#15171C", "tonalRamp": ["#1F2329", "#2E333B", "#4B5160", "#676E7C", "#9AA0AC", "#C9CEDA", "#E3E5EC", "#F2F3F7"] },
+      "surface": { "role": "neutral", "displayName": "台面", "canonical": "#F7F8FA", "darkCanonical": "#1B1E24" },
+      "card": { "role": "neutral", "displayName": "白纸", "canonical": "#FFFFFF", "darkCanonical": "#22252C" },
+      "border": { "role": "neutral", "displayName": "边线", "canonical": "#E3E5EC", "darkCanonical": "#343842" },
+      "ink": { "role": "neutral", "displayName": "主墨", "canonical": "#1F2329", "darkCanonical": "#E6E8ED" },
+      "ink-secondary": { "role": "neutral", "displayName": "次墨", "canonical": "#4B5160", "darkCanonical": "#A9AFBA" },
+      "ink-muted": { "role": "neutral", "displayName": "弱墨", "canonical": "#676E7C", "darkCanonical": "#8A919E" },
+      "success": { "role": "semantic", "displayName": "成功", "canonical": "#178744", "darkCanonical": "#3DBE6E" },
+      "warning": { "role": "semantic", "displayName": "警示", "canonical": "#B25E09", "darkCanonical": "#E0A23C" },
+      "danger": { "role": "semantic", "displayName": "危险", "canonical": "#D93A31", "darkCanonical": "#EF6A5E" }
+    },
+    "typographyMeta": {
+      "page-title": { "displayName": "Page Title", "purpose": "页面主标题,一页一个;单一无衬线家族,600 字重。" },
+      "body": { "displayName": "Body", "purpose": "界面正文;中文字重下限 400。" },
+      "data": { "displayName": "Data 读数", "purpose": "字数/章节/统计等数字,IBM Plex Mono + tnum。" },
+      "manuscript": { "displayName": "Manuscript 手稿", "purpose": "章节正文编辑区专用;全站唯一双倍行高与衬线声音。" }
+    },
+    "shadows": [
+      { "name": "shadow-sm", "value": "0 1px 2px 0 rgba(31,35,41,0.05)", "purpose": "静止卡片的默认存在感。" },
+      { "name": "shadow-md", "value": "0 4px 12px -4px rgba(31,35,41,0.10)", "purpose": "悬停卡片、下拉浮层。" },
+      { "name": "shadow-lg", "value": "0 12px 28px -8px rgba(31,35,41,0.14)", "purpose": "拖拽元素、popover。" },
+      { "name": "shadow-xl", "value": "0 20px 48px -12px rgba(31,35,41,0.18)", "purpose": "模态弹窗,最高层级。" }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "默认状态过渡缓动,150–250ms。" },
+      { "name": "ease-emerge", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "弹窗与浮层出场,200–300ms。" }
+    ],
+    "breakpoints": [
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1440px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "蓝笔主操作按钮,8px 圆角,一屏至多一个。",
+      "html": "<button class=\"ds-btn-primary\">开始创作</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 8px; background: #2E63E8; color: #fff; border: 1px solid #2E63E8; border-radius: 8px; padding: 8px 16px; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: background-color 0.15s cubic-bezier(0.4,0,0.2,1), border-color 0.15s cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: #2557D1; border-color: #2557D1; } .ds-btn-primary:focus-visible { outline: 2px solid #2E63E8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "白纸底描边次级按钮。",
+      "html": "<button class=\"ds-btn-secondary\">取消</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; gap: 8px; background: #FFFFFF; color: #4B5160; border: 1px solid #E3E5EC; border-radius: 8px; padding: 8px 16px; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: all 0.15s cubic-bezier(0.4,0,0.2,1); } .ds-btn-secondary:hover { background: #F7F8FA; border-color: #C9CEDA; color: #1F2329; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "透明底低优先级操作。",
+      "html": "<button class=\"ds-btn-ghost\">稍后再说</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #4B5160; border: 1px solid transparent; border-radius: 8px; padding: 8px 16px; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: all 0.15s cubic-bezier(0.4,0,0.2,1); } .ds-btn-ghost:hover { background: #EEF0F5; color: #1F2329; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "台面底输入框,聚焦转白纸底 + 蓝笔边线 + 光环。",
+      "html": "<input class=\"ds-input\" placeholder=\"例如:我的修仙小说\" />",
+      "css": ".ds-input { width: 100%; padding: 10px 14px; border: 1px solid #E3E5EC; border-radius: 8px; background: #F7F8FA; color: #1F2329; font-size: 0.9375rem; transition: all 0.15s; } .ds-input:focus { outline: none; border-color: #2E63E8; background: #FFFFFF; box-shadow: 0 0 0 3px #EAF0FE; } .ds-input::placeholder { color: #676E7C; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "白纸卡片:1px 边线 + 极轻环境影,悬停边线加深。",
+      "html": "<div class=\"ds-card\"><h3 class=\"ds-card-title\">大梦长生</h3><span class=\"ds-chip\">玄幻</span><p class=\"ds-card-meta\">128 章 · 42.6 万字</p></div>",
+      "css": ".ds-card { background: #FFFFFF; border: 1px solid #E3E5EC; border-radius: 12px; padding: 20px; box-shadow: 0 1px 2px 0 rgba(31,35,41,0.05); transition: border-color 0.15s, box-shadow 0.15s; cursor: pointer; } .ds-card:hover { border-color: #C9CEDA; box-shadow: 0 4px 12px -4px rgba(31,35,41,0.10); } .ds-card-title { font-size: 1rem; font-weight: 600; color: #1F2329; margin: 0 0 8px; } .ds-chip { display: inline-flex; font-size: 0.75rem; font-weight: 500; padding: 3px 8px; border-radius: 6px; background: #F7F8FA; color: #4B5160; border: 1px solid #E3E5EC; } .ds-card-meta { font-size: 0.8125rem; color: #676E7C; margin: 12px 0 0; font-family: 'IBM Plex Mono', monospace; }"
+    },
+    {
+      "name": "Nav Item",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "浅色侧栏导航项:激活态蓝笔洗底 + 蓝笔文本,无左缘条纹。",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-active\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z\"/></svg>章节创作</a><a class=\"ds-nav-item\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25\"/></svg>大纲编辑</a></nav>",
+      "css": ".ds-nav { display: flex; flex-direction: column; gap: 2px; width: 220px; background: #F2F3F7; padding: 8px; border-radius: 12px; } .ds-nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; color: #4B5160; text-decoration: none; font-size: 0.875rem; font-weight: 500; transition: background-color 0.15s, color 0.15s; } .ds-nav-item:hover { background: #EEF0F5; color: #1F2329; } .ds-nav-item.ds-active { background: #EAF0FE; color: #1E48B8; }"
+    },
+    {
+      "name": "Content Sheet",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "签名组件:灰画布上的白色内容纸,所有视图生长在这张纸上。",
+      "html": "<div class=\"ds-sheet-demo\"><div class=\"ds-sheet\"><div class=\"ds-sheet-head\">章节创作</div><p class=\"ds-sheet-body\">白纸内部用分隔线与台面色组织内容,不再层层叠卡。</p></div></div>",
+      "css": ".ds-sheet-demo { background: #F2F3F7; padding: 12px; border-radius: 16px; } .ds-sheet { background: #FFFFFF; border: 1px solid #E3E5EC; border-radius: 12px; overflow: hidden; } .ds-sheet-head { padding: 14px 20px; font-size: 1rem; font-weight: 600; color: #1F2329; border-bottom: 1px solid #E3E5EC; } .ds-sheet-body { padding: 16px 20px; font-size: 0.9375rem; color: #4B5160; margin: 0; }"
+    },
+    {
+      "name": "Manuscript Page",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "签名组件:写作区稿件,双倍行高文楷排版,全站唯一文学声音。",
+      "html": "<div class=\"ds-manuscript\"><p>山门外的雪下了三日,萧远坐在石阶上,掌心的那枚玉简仍旧温热。</p><p>他忽然明白,师父留下的从来不是功法,而是一张星图。</p></div>",
+      "css": ".ds-manuscript { width: min(800px, 90%); margin: 0 auto; background: #FFFFFF; border: 1px solid #E3E5EC; border-radius: 12px; padding: 40px 72px; } .ds-manuscript p { font-family: 'LXGW WenKai Screen', 'Noto Serif SC', Georgia, serif; font-size: 1.0625rem; line-height: 2; letter-spacing: 0.02em; color: #1F2329; margin: 0 0 1em; text-indent: 2em; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "晴窗编辑部",
+    "overview": "一间明亮的云端编辑部:灰白的工位台面、整洁的白纸、编辑手里唯一一支蓝笔。界面是中性、清晰、值得信任的现代协作工具(气质对标飞书/Notion),把作者的注意力完整交还给故事。文学气质不由 chrome 承担——全站只有正文手稿区允许「文人声音」。",
+    "keyCharacteristics": [
+      "灰底白纸的双层表面秩序:灰画布上铺白色内容纸,层级靠表面与 1px 边框",
+      "单一无衬线家族(Inter + 思源黑体)承担全部 UI;等宽只做读数;文楷只属于正文",
+      "蓝笔单强调色:主操作、激活态、链接;语义色只做状态",
+      "8px 圆角控件、12px 圆角容器、极轻中性阴影",
+      "150–250ms ease-out;动效只表达状态;明暗双主题同等公民"
+    ],
+    "rules": [
+      { "name": "蓝笔十分之一律", "body": "任何一屏中蓝笔(含按压、洗)占据的视觉面积不得超过 10%。它是编辑的笔,不是墙漆。", "section": "colors" },
+      { "name": "灰底白纸律", "body": "表面只有两层秩序:灰画布与白纸。白纸内部用分隔线与台面色组织内容,禁止卡片套卡片。", "section": "colors" },
+      { "name": "正文即主角律", "body": "写作区的排版永远优先于任何 chrome。若工具面板与正文争夺注意力,砍工具面板。", "section": "typography" },
+      { "name": "四百字重律", "body": "中文界面文字的 font-weight 永远 ≥400。300 字重不出现在任何地方。", "section": "typography" },
+      { "name": "素影律", "body": "阴影永远是中性墨色的低透明度,任何组件不得使用彩色投影或发光。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 全站图标统一 lucide-vue-next,线宽 1.5,尺寸 16/20/24px 三档。",
+      "Do 每个动效提供 prefers-reduced-motion: reduce 降级。",
+      "Do 每个新增颜色必须同时定义暗色值,分别验证对比度(正文 ≥4.5:1)。",
+      "Do 同一操作全站同一控件长相。",
+      "Do 空状态给出下一步动作;加载用骨架屏。",
+      "Do 数字读数一律 mono + tnum。"
+    ],
+    "donts": [
+      "Don't 「AI 应用套壳感」:满屏渐变、发光按钮、紫蓝渐变配色、✨ 魔法话术。",
+      "Don't 「臃肿后台风」:一屏超过一个主操作、无请求的弹窗、装饰性统计卡。",
+      "Don't 「性冷淡极简风」:常用功能不得藏进二级菜单;空状态必须可行动。",
+      "Don't 「老式编辑器感」:界面正文不小于 0.875rem,写作区不小于 1.0625rem/行高 2。",
+      "Don't 深色侧栏、终端/IDE 隐喻、直角工程感。",
+      "Don't emoji 图标、原生 alert()。",
+      "Don't 渐变文字、玻璃拟态、大于 1px 的彩色侧边条纹、彩色阴影。",
+      "Don't 药丸形按钮(chips 除外)、卡片套卡片、无边框纯阴影卡。"
+    ]
+  }
+}
