@@ -55,6 +55,8 @@ def _extract_protagonist_name(root: Path, settings_dir: Path) -> str:
     patterns = [
         r"^>\s*主角[：:]\s*([^｜|\n]+)",
         r"\*?\*?姓名\*?\*?[：:]\s*([^\s（(]+)",
+        # 表格格式：| **姓名** | **陆烬** |
+        r"\|\s*\*{0,2}姓名\*{0,2}\s*\|\s*\*{0,2}([^|\s（(*]+)",
     ]
     for pattern in patterns:
         m = re.search(pattern, text, re.MULTILINE)

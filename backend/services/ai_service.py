@@ -16,6 +16,11 @@ DEFAULT_AI_API_KEY = "your-openai-api-key-here"
 DEFAULT_AI_MODEL = "gpt-4"
 
 
+class ToolsUnsupportedError(Exception):
+    """当前 AI 供应商/模型不支持 function calling 时抛出，上层应降级。"""
+    pass
+
+
 class AIService:
     """AI 服务封装"""
 
@@ -90,6 +95,95 @@ class AIService:
                 if attempt < max_retries - 1:
                     import asyncio
                     await asyncio.sleep(3 + attempt * 2)  # 递增等待：3s, 5s
+                    continue
+                raise last_error
+
+
+    async def chat_with_tools(
+        self,
+        messages: List[Dict],
+        tools: List[Dict],
+        temperature: float = 0.3,
+        max_tokens: int = 2000,
+    ) -> Dict[str, Any]:
+        """带 function calling 的单轮请求（agent 侦查阶段专用）。
+
+        返回 {"content": str, "tool_calls": [{"id","name","arguments"(dict)}]}。
+        供应商不支持 tools 时抛 ToolsUnsupportedError，由上层降级为预打包模式。
+        """
+        import aiohttp
+
+        base_url = self.base_url.rstrip("/")
+        url = f"{base_url}/chat/completions" if base_url.endswith("/v1") else f"{base_url}/v1/chat/completions"
+
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "Accept": "application/json",
+        }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+
+        self._debug(f"AI Tools Request: {url} (Model: {self.model}, tools={len(tools)})")
+
+        max_retries = 2
+        last_error: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
+                timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=300)
+                async with aiohttp.ClientSession(connector=connector, timeout=timeout, trust_env=True) as session:
+                    async with session.post(url, json=payload, headers=headers) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            # 供应商不支持 tools：典型为 400 且报错提到 tools/functions
+                            lowered = error_text.lower()
+                            if response.status in (400, 404, 422) and (
+                                "tool" in lowered or "function" in lowered
+                            ):
+                                raise ToolsUnsupportedError(
+                                    f"Provider rejected tools: {error_text[:200]}"
+                                )
+                            raise Exception(f"AI API returned {response.status}: {error_text[:200]}")
+
+                        data = await response.json()
+                        choice = (data.get("choices") or [{}])[0]
+                        message = choice.get("message", {}) or {}
+                        raw_calls = message.get("tool_calls") or []
+                        tool_calls = []
+                        for tc in raw_calls:
+                            fn = tc.get("function", {}) or {}
+                            try:
+                                args = json.loads(fn.get("arguments") or "{}")
+                            except json.JSONDecodeError:
+                                args = {}
+                            tool_calls.append({
+                                "id": tc.get("id") or f"call_{len(tool_calls)}",
+                                "name": fn.get("name", ""),
+                                "arguments": args,
+                            })
+                        return {
+                            "content": message.get("content") or "",
+                            "tool_calls": tool_calls,
+                        }
+            except ToolsUnsupportedError:
+                raise
+            except Exception as e:
+                last_error = e
+                print(f"AI Tools Request Failed (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    import asyncio
+                    await asyncio.sleep(2)
                     continue
                 raise last_error
 
@@ -518,14 +612,30 @@ def get_ai_service() -> AIService:
 
 def configure_ai_service(base_url: str = None, api_key: str = None, model: str = None):
     global _ai_service
-    
-    # 保存到文件
-    config_data = {
+
+    # 合并保存（保留 agent_mode 等其他配置项）
+    config_data = _load_config_from_file()
+    config_data.update({
         "base_url": base_url or DEFAULT_AI_BASE_URL,
         "api_key": api_key or "",
         "model": model or DEFAULT_AI_MODEL
-    }
+    })
     _save_config_to_file(config_data)
-    
+
     # 更新内存实例
     _ai_service = AIService(base_url, api_key, model)
+
+
+def get_agent_mode() -> bool:
+    """写手 Agent 模式开关（默认开启；调用失败会自动降级，因此默认开是安全的）。"""
+    cfg = _load_config_from_file()
+    val = cfg.get("agent_mode")
+    if val is None:
+        return True
+    return bool(val)
+
+
+def set_agent_mode(enabled: bool) -> None:
+    cfg = _load_config_from_file()
+    cfg["agent_mode"] = bool(enabled)
+    _save_config_to_file(cfg)

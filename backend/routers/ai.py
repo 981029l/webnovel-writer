@@ -32,9 +32,17 @@ class InitRequest(BaseModel):
     protagonist_name: str = ""
     golden_finger_name: str = ""
     golden_finger_type: str = ""
+    golden_finger_design: str = ""  # 新增：AI 共创的完整金手指设定（硬约束）
     additional_info: str = ""  # 新增：用户补充设定
     target_words: Optional[int] = None
     mode: str = "standard"
+
+
+class GoldenFingerChatRequest(BaseModel):
+    messages: List[dict] = []
+    genre: str = "玄幻"
+    substyle: str = ""
+    seed: str = ""
 
 
 class PlanRequest(BaseModel):
@@ -80,9 +88,14 @@ def _find_chapter_files(chapters_dir: Path, chapter_id: int):
 
 @router.get("/config")
 async def get_config():
-    from services.ai_service import get_ai_service
+    from services.ai_service import get_ai_service, get_agent_mode
     service = get_ai_service()
-    return {"base_url": service.base_url, "model": service.model, "has_api_key": bool(service.api_key)}
+    return {
+        "base_url": service.base_url,
+        "model": service.model,
+        "has_api_key": bool(service.api_key),
+        "agent_mode": get_agent_mode(),
+    }
 
 
 @router.put("/config")
@@ -90,6 +103,18 @@ async def update_config(config: AIConfig):
     from services.ai_service import configure_ai_service
     configure_ai_service(config.base_url, config.api_key, config.model)
     return {"success": True}
+
+
+class AgentModeRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/agent-mode")
+async def update_agent_mode(req: AgentModeRequest):
+    """写手 Agent 模式开关（开启后写作前会自主查阅设定/伏笔/前文）"""
+    from services.ai_service import set_agent_mode, get_agent_mode
+    set_agent_mode(req.enabled)
+    return {"success": True, "agent_mode": get_agent_mode()}
 
 
 @router.post("/init")
@@ -110,6 +135,7 @@ async def init_project_api(request: InitRequest, root: Path = Depends(get_projec
             protagonist_name=request.protagonist_name,
             golden_finger_name=request.golden_finger_name,
             golden_finger_type=request.golden_finger_type,
+            golden_finger_design=request.golden_finger_design,
             additional_info=request.additional_info,
             target_words=request.target_words,
             mode=request.mode
@@ -137,6 +163,7 @@ async def init_project_stream_api(request: InitRequest, root: Path = Depends(get
                 protagonist_name=request.protagonist_name,
                 golden_finger_name=request.golden_finger_name,
                 golden_finger_type=request.golden_finger_type,
+                golden_finger_design=request.golden_finger_design,
                 mode=request.mode,
                 additional_info=request.additional_info,
                 target_words=request.target_words
@@ -218,6 +245,52 @@ async def generate_titles_api(root: Path = Depends(get_project_root)):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/golden-finger-chat-stream")
+async def golden_finger_chat_stream_api(request: GoldenFingerChatRequest):
+    """流式：金手指共创对话（项目创建前即可调用，不依赖项目根）"""
+    from services.skill_executor import SkillExecutor
+    from services.ai_service import get_ai_service
+    executor = SkillExecutor(None, get_ai_service())
+
+    async def event_generator():
+        try:
+            async for chunk in executor.execute_golden_finger_chat_stream(
+                messages=request.messages,
+                genre=request.genre,
+                substyle=request.substyle,
+                seed=request.seed,
+            ):
+                yield f"data: {json.dumps({'type': 'content', 'chunk': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/golden-finger-generate-stream")
+async def golden_finger_generate_stream_api(request: GoldenFingerChatRequest):
+    """流式：把金手指共创对话汇总为「建议书名 + 金手指文档」"""
+    from services.skill_executor import SkillExecutor
+    from services.ai_service import get_ai_service
+    executor = SkillExecutor(None, get_ai_service())
+
+    async def event_generator():
+        try:
+            async for chunk in executor.execute_golden_finger_generate_stream(
+                messages=request.messages,
+                genre=request.genre,
+                substyle=request.substyle,
+                seed=request.seed,
+            ):
+                yield f"data: {json.dumps({'type': 'content', 'chunk': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/write")

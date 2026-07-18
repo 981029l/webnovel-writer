@@ -685,6 +685,105 @@ class SkillExecutor:
             return self._truncate_text(fallback, max_chars, keep_tail=False)
         return ""
 
+    # ==================== 风格范文（scene demos） ====================
+
+    # 反 AI 腔硬约束：所有题材通用，随正文写作 prompt 注入
+    ANTI_AI_STYLE_INSTRUCTION = (
+        "【反AI腔硬约束（必须遵守）】\n"
+        '1. 禁止用单字或两字成段制造情绪（如"痛。""他一震。""冷。"），全章此类段落不得超过2处，且不得用于开篇前3段。\n'
+        '2. 禁止破折号/省略号悬停式吊胃口（如"这是——""而那个……"单独成段），全章不超过1处。\n'
+        "3. 开篇第一段禁止以痛觉、眩晕、窒息、耳鸣等感官不适开场；必须直接进入人物的处境、动作或冲突。\n"
+        "4. 禁止连续两段以上无人物动作的空镜氛围铺陈；环境描写必须携带信息（威胁、资源、局势、身份）。\n"
+        "5. 禁止翻译腔与文艺腔句式（如\"是的，他知道\"\"某种东西碎裂了\"\"仿佛整个世界……\"），用具体动作和实物落地。\n"
+        "6. 段落长度要有自然变化：以2-4句的段落为主体，短段落用于关键转折，不做机械的一句一段。\n"
+        "7. 下方【风格范文】展示了本子风格的标准笔触——学习它的节奏、用词和镜头感，但禁止照抄其中的具体人物、地名与句子。"
+    )
+
+    # 场景匹配关键词：用于按需选择注入哪段范文
+    _DEMO_COMBAT_KEYWORDS = [
+        "战", "斗", "杀", "打", "交手", "对决", "厮杀", "伏击", "围攻",
+        "偷袭", "比试", "大比", "出手", "追杀", "攻", "守", "搏", "对峙", "冲突",
+    ]
+    _DEMO_PAYOFF_KEYWORDS = [
+        "突破", "晋升", "晋级", "进阶", "升级", "夺", "获得", "到手", "收获",
+        "奖励", "兑现", "收服", "炼成", "入账", "翻盘", "反杀", "扬名", "震惊",
+    ]
+
+    def _load_style_demo_examples(
+        self,
+        genre: str,
+        substyle: str = "",
+        chapter: int = 0,
+        chapter_outline: str = "",
+        max_chars: int = 1800,
+    ) -> str:
+        """加载子风格范文（examples/{substyle}.md），按章节位置与大纲内容智能选段。
+
+        范文文件格式（## 二级标题分段）：
+            ## 开篇
+            ## 核心场面
+            ## 收益兑现
+        选择逻辑：
+        - 第1-3章 → 注入「开篇」段（开篇最易跑腔，重点加固）
+        - 本章大纲含战斗类关键词 → 注入「核心场面」段
+        - 本章大纲含收益类关键词 → 注入「收益兑现」段
+        - 一段都没命中时默认注入「核心场面」，保证至少有一段范文兜底
+        """
+        normalized_genre = canonical_genre_id(genre)
+        bucket = get_genre_bucket(normalized_genre)
+        effective_substyle = self._get_effective_substyle(normalized_genre, substyle)
+        if not bucket or not effective_substyle:
+            return ""
+
+        demo_file = (
+            SKILLS_DIR / "webnovel-write" / "prompts" / "genres"
+            / bucket / "examples" / f"{effective_substyle}.md"
+        )
+        raw = self._read_file(demo_file)
+        if not raw:
+            return ""
+
+        # 解析 ## 段落
+        sections: Dict[str, str] = {}
+        current_title = ""
+        current_lines: List[str] = []
+        for line in raw.splitlines():
+            if line.startswith("## "):
+                if current_title and current_lines:
+                    sections[current_title] = "\n".join(current_lines).strip()
+                current_title = line[3:].strip()
+                current_lines = []
+            elif current_title:
+                current_lines.append(line)
+        if current_title and current_lines:
+            sections[current_title] = "\n".join(current_lines).strip()
+        if not sections:
+            return ""
+
+        outline_text = self._safe_text(chapter_outline)
+        wanted: List[str] = []
+        if chapter and chapter <= 3 and sections.get("开篇"):
+            wanted.append("开篇")
+        if sections.get("核心场面") and any(k in outline_text for k in self._DEMO_COMBAT_KEYWORDS):
+            wanted.append("核心场面")
+        if sections.get("收益兑现") and any(k in outline_text for k in self._DEMO_PAYOFF_KEYWORDS):
+            wanted.append("收益兑现")
+        if not wanted:
+            for fallback_key in ("核心场面", "开篇", "收益兑现"):
+                if sections.get(fallback_key):
+                    wanted.append(fallback_key)
+                    break
+        if not wanted:
+            return ""
+
+        parts = [f"### 范文·{key}\n{sections[key]}" for key in wanted]
+        body = "\n\n".join(parts)
+        header = (
+            f"【风格范文（{normalized_genre}·{effective_substyle}）】\n"
+            "以下片段展示本子风格的标准笔触与节奏，供学习模仿；人物、地名、情节均与本书无关，禁止照抄。\n"
+        )
+        return header + self._truncate_text(body, max_chars, keep_tail=False)
+
     def _load_genre_trope_focus(self, genre: str, source: str = "", max_chars: int = 1200) -> str:
         """从通用套路库中提取当前题材对应片段，避免混入其他题材套路。"""
         raw = self._safe_text(source).strip()
@@ -1175,6 +1274,7 @@ class SkillExecutor:
 【当前题材】
 题材：{genre}
 子风格：{substyle or "（无）"}
+题材文风保持：所有新增或改写的句子必须贴合当前题材/子风格的基调（爽文类保持昂扬利落，禁止把修补写成冷峻文学腔或怪谈腔）。
 
 【本章大纲（防止修偏）】
 {chapter_outline_for_prompt if chapter_outline_for_prompt else "（无）"}
@@ -1291,6 +1391,7 @@ class SkillExecutor:
 【当前题材】
 题材：{genre}
 子风格：{substyle or "（无）"}
+题材文风保持：所有新增或改写的句子必须贴合当前题材/子风格的基调（爽文类保持昂扬利落，禁止把修补写成冷峻文学腔或怪谈腔）。
 
 【本章大纲】
 {chapter_outline if chapter_outline else "（无）"}
@@ -2429,7 +2530,8 @@ class SkillExecutor:
         golden_finger_type: str = "",
         mode: str = "standard",
         additional_info: str = "",
-        target_words: Optional[int] = None
+        target_words: Optional[int] = None,
+        golden_finger_design: str = ""
     ):
         """流式执行 webnovel-init Skill 完整工作流"""
         def make_step(step, name, status="pending"):
@@ -2473,7 +2575,21 @@ class SkillExecutor:
                 init_kwargs["target_words"] = target_words
             init_project(**init_kwargs)
             yield make_step(8, "生成项目文件骨架", "completed")
-            
+
+            # Step 8.5: 若用户通过 AI 共创敲定了完整金手指设定，直接覆写金手指设计.md
+            # 这份内容是用户确认过的硬约束，优先级高于骨架模板，也作为后续 AI 填充的锚。
+            gf_design = self._safe_text(golden_finger_design).strip()
+            if gf_design:
+                yield make_step("8.5", "写入 AI 共创金手指设定", "processing")
+                try:
+                    gf_file = self.project_root / "设定集" / "金手指设计.md"
+                    gf_file.parent.mkdir(parents=True, exist_ok=True)
+                    content = gf_design if gf_design.lstrip().startswith("#") else f"# 金手指设计\n\n{gf_design}"
+                    gf_file.write_text(content, encoding="utf-8")
+                    yield make_step("8.5", "写入 AI 共创金手指设定", "completed")
+                except Exception as e:
+                    yield make_step("8.5", f"写入金手指设定失败: {e}", "warning")
+
             # Step 9: AI 自动填充内容
             has_critical_failure = False
             if self.ai_service:
@@ -2485,6 +2601,7 @@ class SkillExecutor:
                     golden_finger_name,
                     golden_finger_type,
                     additional_info,
+                    gf_design,
                 ):
                     yield json.dumps(status, ensure_ascii=False)
                     if isinstance(status, dict) and status.get("status") == "failed":
@@ -2497,7 +2614,7 @@ class SkillExecutor:
         except Exception as e:
             yield json.dumps({"type": "error", "message": f"项目初始化失败: {str(e)}"}, ensure_ascii=False)
 
-    async def _ai_fill_init_content_stream(self, title, genre, substyle, protagonist, gf_name, gf_type, additional_info=""):
+    async def _ai_fill_init_content_stream(self, title, genre, substyle, protagonist, gf_name, gf_type, additional_info="", golden_finger_design=""):
         """流式填充 AI 初始化内容 - 使用串行调用确保一致性"""
         # 加载知识库
         genre = canonical_genre_id(genre)
@@ -2527,6 +2644,7 @@ class SkillExecutor:
 - 子风格：{effective_substyle or "（未指定，按题材默认）"}
 - 主角名：{protagonist or "（待定）"}
 - 金手指：{gf_name or "（待定）"} - {gf_type or "（待定）"}
+{("【金手指设定（硬约束，世界观/主角/大纲都必须严格围绕它展开，不得改动其核心规则与术语）】" + chr(10) + golden_finger_design.strip()) if golden_finger_design and golden_finger_design.strip() else ""}
 【用户补充设定】
 {additional_info if additional_info else "（无）"}
 {independent_stage_prompt if independent_stage_prompt else ""}
@@ -2739,7 +2857,8 @@ class SkillExecutor:
         golden_finger_type: str = "",
         mode: str = "standard",
         additional_info: str = "",
-        target_words: Optional[int] = None
+        target_words: Optional[int] = None,
+        golden_finger_design: str = ""
     ) -> Dict[str, Any]:
         """执行 webnovel-init Skill 完整工作流 (保留兼容性)"""
         # 简单包装 execute_init_stream 以保持返回 Dict 格式
@@ -2755,6 +2874,7 @@ class SkillExecutor:
             mode=mode,
             additional_info=additional_info,
             target_words=target_words,
+            golden_finger_design=golden_finger_design,
         ):
             update = json.loads(update_str)
             if update["type"] == "step":
@@ -2939,6 +3059,128 @@ class SkillExecutor:
             return {"success": True, "titles": titles[:10]}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _golden_finger_context(self, genre: str, substyle: str = "") -> str:
+        """为金手指共创构建题材上下文（仅读取全局题材知识库，不依赖具体项目）。"""
+        normalized_genre = canonical_genre_id(genre) or "玄幻"
+        normalized_substyle = canonical_substyle_id(normalized_genre, substyle)
+        try:
+            genre_template = self._load_genre_template(normalized_genre)
+        except Exception:
+            genre_template = ""
+        try:
+            selling_points = self._load_reference("webnovel-init", "creativity/selling-points.md")
+        except Exception:
+            selling_points = ""
+        parts = [
+            f"【题材】{normalized_genre}",
+            f"【子风格】{normalized_substyle or '（未指定，按题材默认）'}",
+        ]
+        if genre_template:
+            parts.append(f"【题材套路参考（仅当前题材）】\n{genre_template[:1200]}")
+        if selling_points:
+            parts.append(f"【金手指/卖点设计参考】\n{selling_points[:1200]}")
+        return "\n\n".join(parts)
+
+    async def execute_golden_finger_chat_stream(
+        self,
+        messages: List[Dict[str, str]],
+        genre: str = "玄幻",
+        substyle: str = "",
+        seed: str = "",
+    ):
+        """流式：金手指设计教练，引导用户逐步聊出完整金手指设定。
+
+        messages 为前端维护的对话历史（不含 system）。本方法在其前拼接
+        system 提示词后流式返回 AI 的下一句回复。项目尚未创建时也可调用。
+        """
+        if not self.ai_service:
+            yield "[ERROR] AI Service not configured"
+            return
+
+        context = self._golden_finger_context(genre, substyle)
+        system_prompt = f"""你是一位资深网文策划，专门帮作者共创「金手指/系统」设定。
+
+{context}
+
+【你的工作方式】
+1. 你是在和作者对话，一次只聚焦一个关键问题，循序渐进，不要一次抛出一堆问题。
+2. 引导顺序建议：核心能力 → 触发/获取方式 → 代价与限制（避免无敌太早）→ 成长阶段（前中后期）→ 后期收尾/终极形态 → 隐藏能力/反转。
+3. 每轮回复简短口语化：先用一两句回应/肯定作者的想法，指出可以加强或补漏的点，再提出下一个具体问题。
+4. 主动给建议和示例，不要只会反问。作者拿不定主意时，直接给 2-3 个可选方案让其挑。
+5. 不要在对话里输出最终的完整设定文档，那一步由作者点「生成设定」后单独完成。你现在的任务是把设定聊清楚聊完整。
+6. 全程使用中文。"""
+
+        chat_messages = [{"role": "system", "content": system_prompt}]
+        if seed and not any(m.get("role") == "user" for m in messages):
+            chat_messages.append({"role": "user", "content": f"我的初步想法：{seed}"})
+        chat_messages.extend(
+            {"role": m.get("role", "user"), "content": self._safe_text(m.get("content", ""))}
+            for m in messages
+            if m.get("content")
+        )
+
+        async for chunk in self.ai_service.chat_stream(chat_messages, temperature=0.8, max_tokens=1500):
+            if chunk:
+                yield chunk
+
+    async def execute_golden_finger_generate_stream(
+        self,
+        messages: List[Dict[str, str]],
+        genre: str = "玄幻",
+        substyle: str = "",
+        seed: str = "",
+    ):
+        """流式：把整段对话汇总为「建议书名 + 结构化金手指文档」。
+
+        前端约定输出以两个固定分节标记分隔，便于切分：
+        `===书名===` 之后每行一个 `书名 | 理由`；`===金手指===` 之后是完整 Markdown 文档。
+        """
+        if not self.ai_service:
+            yield "[ERROR] AI Service not configured"
+            return
+
+        context = self._golden_finger_context(genre, substyle)
+        transcript = "\n".join(
+            f"{'作者' if m.get('role') == 'user' else '策划'}：{self._safe_text(m.get('content', ''))}"
+            for m in messages
+            if m.get("content")
+        )
+        if seed:
+            transcript = f"作者的初步想法：{seed}\n{transcript}"
+
+        system_prompt = f"""你是一位资深网文策划。请把下面这段「金手指共创对话」整理成正式设定产物。
+
+{context}
+
+【输出格式（严格遵守，用于程序切分，不要有多余前后缀）】
+第一部分，另起一行以 `===书名===` 开头，其后每行一个候选书名，格式为「书名 | 一句话理由」，给出 3-5 个，突出金手指爽点。
+第二部分，另起一行以 `===金手指===` 开头，其后是完整的金手指设定 Markdown 文档，一级标题为「# 金手指设计」，包含（按需，尽量完整）：
+- 系统名称 / 核心能力（一句话点题）
+- 系统功能（分条，每条给能力说明，可带简短示例）
+- 获取/掠夺规则（普通/高级/神级如何获得）
+- 融合与进化（举例）
+- 商城/兑换（如有）
+- 限制与代价（重点：如何避免无敌太早，前中后期上限差异、寿命/反噬等代价）
+- 隐藏能力/终极反转（如有）
+- 主角成长路线（前期废柴逆袭 → 中期收割 → 后期真相/终局）
+
+【要求】
+1. 忠实于对话内容，把作者聊过的点都落进去；作者没定的细节由你补全，保持自洽。
+2. 文档要具体可用，能直接作为后续世界观/主角/大纲创作的硬约束。
+3. 全程中文。除两个分节标记外，不要输出解释性废话。
+
+【共创对话记录】
+{transcript}"""
+
+        gen_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "请按上述格式输出书名候选和金手指设定文档。"},
+        ]
+
+        async for chunk in self.ai_service.chat_stream(gen_messages, temperature=0.75, max_tokens=4000):
+            if chunk:
+                yield chunk
 
     async def execute_generate_ending_plan(self, remaining_chapters: int = 5) -> Dict[str, Any]:
         """生成收尾规划，统一走题材/子风格 stage prompt 体系。"""
@@ -3689,6 +3931,73 @@ class SkillExecutor:
 
     # ==================== webnovel-write ====================
 
+    async def _run_writer_agent_research(self, chapter: int, context_pack: Dict, chapter_outline: str):
+        """题材写手 Agent 写前调研（方案 B）。
+
+        产出 SSE 事件；把调研到的补充资料写入 context_pack["core"]["agent_materials"]，
+        供 _generate_chapter_content_stream 注入写作 prompt。任何失败都不抛出，只降级。
+        """
+        def make_event(event_type, **kwargs):
+            import json as _json
+            return _json.dumps({"type": event_type, **kwargs}, ensure_ascii=False)
+
+        # 开关关闭 / 无 AI 服务 → 直接跳过
+        try:
+            from services.ai_service import get_agent_mode
+            if not get_agent_mode() or not self.ai_service:
+                return
+        except Exception:
+            return
+
+        genre = context_pack.get("global", {}).get("genre", "") or self._get_project_genre()
+
+        try:
+            from services.genre_writer_agent import GenreWriterAgent
+            # RAG 适配器（可选，失败则为 None）
+            rag_adapter = None
+            try:
+                from routers.rag import get_rag_adapter
+                rag_adapter = get_rag_adapter(self.project_root)
+            except Exception:
+                rag_adapter = None
+
+            agent = GenreWriterAgent(self.ai_service, self.project_root, rag_adapter=rag_adapter)
+
+            # 给 agent 一个"已知上下文简述"，避免它重复查已有信息
+            core = context_pack.get("core", {})
+            known_brief_parts = []
+            if core.get("protagonist_snapshot"):
+                known_brief_parts.append("已知：主角当前状态快照")
+            if core.get("previous_chapter_ending"):
+                known_brief_parts.append("已知：上一章结尾原文")
+            if core.get("recent_summaries"):
+                known_brief_parts.append("已知：近3章摘要")
+            known_brief = "；".join(known_brief_parts)
+
+            yield make_event("step", name="写手 Agent 写前调研", status="processing")
+            materials = ""
+            async for ev in agent.research_stream(genre, chapter, chapter_outline, known_brief):
+                if ev.get("type") == "agent_step":
+                    yield make_event(
+                        "agent_step",
+                        action=ev.get("action", ""),
+                        detail=ev.get("detail", ""),
+                    )
+                elif ev.get("type") == "agent_done":
+                    materials = ev.get("materials", "")
+                    yield make_event(
+                        "step",
+                        name="写手 Agent 写前调研",
+                        status="completed",
+                        detail=f"调研 {ev.get('rounds', 0)} 轮 / 查阅 {ev.get('calls', 0)} 次",
+                    )
+
+            if materials:
+                context_pack.setdefault("core", {})["agent_materials"] = materials
+        except Exception as e:  # noqa: BLE001 — 调研绝不阻塞写作
+            print(f"[写手Agent] 调研阶段异常，降级为标准写作: {e}")
+            yield make_event("step", name="写手 Agent 写前调研", status="completed", detail="降级为标准模式")
+
     async def execute_write_stream(self, chapter: int, word_count: int = 3500):
         """流式执行 webnovel-write Skill 完整工作流"""
         def make_event(type, **kwargs):
@@ -3713,6 +4022,11 @@ class SkillExecutor:
         yield make_event("step", name="Context Agent 搜集上下文", status="processing")
         context_pack = await self._execute_context_agent(chapter)
         yield make_event("step", name="Context Agent 搜集上下文", status="completed")
+
+        # Step 1.2: 题材写手 Agent 写前调研（方案 B，失败自动降级，不阻塞写作）
+        chapter_outline = context_pack.get("core", {}).get("chapter_outline", "")
+        async for ev in self._run_writer_agent_research(chapter, context_pack, chapter_outline):
+            yield ev
 
         # Step 1.5: 加载核心约束
         yield make_event("step", name="加载写作约束", status="processing")
@@ -5345,6 +5659,19 @@ class SkillExecutor:
         if style_anchor_parts:
             prompt_layers.append("\n".join(style_anchor_parts))
 
+        # 注入反 AI 腔硬约束 + 按需选择的子风格范文（修复"有规则没范文"导致的跑腔）
+        style_demo = self._load_style_demo_examples(
+            genre,
+            substyle,
+            chapter=chapter,
+            chapter_outline=chapter_outline,
+            max_chars=write_budget.get("style_demos", 1800),
+        )
+        if style_demo:
+            prompt_layers.append(self.ANTI_AI_STYLE_INSTRUCTION + "\n\n" + style_demo)
+        else:
+            prompt_layers.append(self.ANTI_AI_STYLE_INSTRUCTION)
+
         prompt_layers.append(hard_constraints_prompt)
         system_prompt = "\n\n".join(part for part in prompt_layers if part)
 
@@ -5375,6 +5702,15 @@ class SkillExecutor:
 【开篇章节约束（必须遵守）】
 {opening_chapter_instruction}
 """
+
+        # 注入写手 Agent 写前调研资料（方案 B：agent 自主查阅的伏笔/角色/设定补充）
+        agent_materials = context_pack.get("core", {}).get("agent_materials", "")
+        if agent_materials:
+            system_prompt += "\n\n" + self._truncate_text(
+                agent_materials,
+                write_budget.get("agent_materials", 3000),
+                keep_tail=False,
+            )
 
         # ========== 最高优先级：死亡角色黑名单（放入 System Prompt 最显眼位置）==========
         dead_warning_system = ""
@@ -5486,13 +5822,14 @@ class SkillExecutor:
 --------------------------------------------------
 
 **边界判定规则（严格遵守！）**：
-1. **关键词归属判定**：如果下一章出现"兵临城下"、"出征"、"交战"、"决战"等词，说明**战斗开始是下一章的内容**！
+（下面用"战斗/出征"举例说明边界原理，但这只是例子。请把同样的原理套用到【当前题材】的冲突类型上：言情=告白/摊牌/分手，都市=签约/晋升/辞职，古言=当众发作/圣意揭晓）
+1. **关键词归属判定（以战争题材为例）**：如果下一章出现"兵临城下"、"出征"、"交战"、"决战"等词，说明**战斗开始是下一章的内容**！
    - 本章只能写到：敌军逼近、战前准备、气氛紧张、双方对峙
    - 本章**绝对禁止**：城门打开、出城迎战、刀剑相向、杀敌、有人死亡
 
-2. **冲突解决归属判定**：如果下一章标题包含"击败"、"歼灭"、"胜利"，说明**战斗胜利是下一章内容**！
-   - 本章只能写到：战斗胶着、危机四伏、悬念积累
-   - 本章**绝对禁止**：敌人被杀光、敌首被斩、战斗结束
+2. **冲突解决归属判定**：如果下一章标题包含"击败"、"歼灭"、"胜利"（或言情的"在一起"、都市的"翻盘"），说明**结局是下一章内容**！
+   - 本章只能写到：冲突胶着、悬念积累
+   - 本章**绝对禁止**：把下一章的高潮结果提前写完
 
 3. **具体到你现在的任务**：
    - 本章（第{chapter}章）大纲关键词：{chapter_keywords if chapter_keywords else "无"}...
@@ -5504,10 +5841,14 @@ class SkillExecutor:
 - 本章写"城门打开，大军杀出" → 这是下一章"出征"的内容！
 - 本章写"战斗结束，敌首授首" → 你把下一章的高潮用完了！
 
-**正确示例（留有悬念的写法）**：
-- 本章结尾："远处地平线上，五千大军的火把连成一片，如同燃烧的星河……" → 悬念！下一章写战斗
-- 本章结尾："顾承厄冷笑一声，缓缓拔刀：'来得正好。'" → 悬念！下一章写出征
-- 本章结尾："城墙上，守卫们眼睁睁看着黑压压的大军逼近，却发现城门正在缓缓打开……" → 悬念！
+**正确示例（留悬念，但氛围意象必须匹配【当前题材】，严禁默认套用战争/肃杀镜头）**：
+（下面每条对应不同题材，请只模仿与本书题材一致的那种，不要把战争/黑压压/肃杀的基调搬到言情、都市、种田等题材里）
+- 玄幻："他摊开掌心，那枚玉简烫得发红——师父封存百年的东西，此刻正在苏醒。" → 悬念！下一章揭晓传承
+- 现代言情："她盯着那条已读不回的消息，指尖冰凉。三分钟后，门铃响了。" → 悬念！下一章写重逢
+- 都市现实："他把辞职信推过去，经理还没抬头，他已经站起来了。" → 悬念！下一章写摊牌后果
+- 古言："她垂眸应下，袖中的手却攥紧了那张字条。夜里，该动的人自然会动。" → 悬念！下一章写布局发作
+- 战争/征伐题材才用："远处地平线上，大军的火把连成一片……" → 悬念！下一章写战斗
+- **通用原则**：结尾停在"即将揭晓/即将发生"的临界点，用**本题材自己的意象**制造钩子。
 
 ## 上一章遗留状态（必须严格遵守！违反即失败！）
 以下是上一章的关键细节，写作时**必须考虑每一条**，不能假装没发生：
