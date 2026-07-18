@@ -630,6 +630,10 @@ class SkillExecutor:
         return self._truncate_text(merged, max_chars, keep_tail=False)
 
     def _load_substyle_examples(self, genre: str, substyle: str = "", max_chars: int = 900) -> str:
+        # 子风格独立包:范文一律来自包内 examples.md,不再挖掘题材知识库
+        pkg_text = self._load_style_package_file("examples.md", genre, substyle)
+        if pkg_text:
+            return self._truncate_text(pkg_text, max_chars, keep_tail=False)
         effective = self._get_effective_substyle(genre, substyle)
         item = get_substyle_entry(genre, effective)
         if not item:
@@ -737,7 +741,7 @@ class SkillExecutor:
 
         demo_file = (
             SKILLS_DIR / "webnovel-write" / "prompts" / "genres"
-            / bucket / "examples" / f"{effective_substyle}.md"
+            / bucket / effective_substyle / "examples.md"
         )
         raw = self._read_file(demo_file)
         if not raw:
@@ -878,7 +882,12 @@ class SkillExecutor:
         return self._truncate_text(merged, max_chars, keep_tail=False)
 
     def _load_genre_style_examples(self, genre: str, substyle: str = "", max_chars: int = 1200) -> str:
-        """按题材动态加载"示例片段"，用于风格对齐（只学表达，不照抄）。"""
+        """按题材动态加载"示例片段"，用于风格对齐（只学表达，不照抄）。
+
+        子风格独立包改造后:示例统一由 _load_substyle_examples 从包内提供,
+        本函数返回空以避免重复注入(所有调用点均成对出现)。
+        """
+        return ""
         genre_dir = self._resolve_genre_knowledge_dir(genre)
         effective_substyle = self._get_effective_substyle(genre, substyle)
 
@@ -1226,12 +1235,12 @@ class SkillExecutor:
         positive_style_instruction = self._build_genre_positive_style_instruction(genre, stage="正文润色")
         substyle_instruction = self._build_substyle_instruction(genre, substyle, stage="正文润色")
         polish_guide = self._truncate_text(
-            self._load_reference("webnovel-write", "polish-guide.md"),
+            self._load_style_package_file("polish-guide.md"),
             polish_budget.get("guide", 1600),
             keep_tail=False,
         )
         typesetting = self._truncate_text(
-            self._load_reference("webnovel-write", "writing/typesetting.md"),
+            self._load_style_package_file("typesetting.md"),
             polish_budget.get("typesetting", 1200),
             keep_tail=False,
         )
@@ -1240,14 +1249,11 @@ class SkillExecutor:
             polish_budget.get("suggestions", 1800),
             keep_tail=True,
         )
-        genre_examples_for_prompt = self._truncate_text(
-            self._load_genre_style_examples(genre, substyle, max_chars=polish_budget.get("genre_examples", 1000)),
-            polish_budget.get("genre_examples", 1000),
-            keep_tail=False,
-        )
+        # 子风格独立包:示例统一来自包内 examples.md,不再读题材知识库
+        genre_examples_for_prompt = ""
         substyle_examples_for_prompt = self._truncate_text(
-            self._load_substyle_examples(genre, substyle, max_chars=polish_budget.get("genre_examples", 700)),
-            polish_budget.get("genre_examples", 700),
+            self._load_style_package_file("examples.md"),
+            polish_budget.get("genre_examples", 900),
             keep_tail=False,
         )
         content_for_prompt = self._truncate_text(
@@ -1371,7 +1377,7 @@ class SkillExecutor:
         substyle = self._get_project_substyle()
         chapter_outline = self._truncate_text(self._find_chapter_outline(chapter_id), 1800, keep_tail=False)
         typesetting = self._truncate_text(
-            self._load_reference("webnovel-write", "writing/typesetting.md"),
+            self._load_style_package_file("typesetting.md"),
             1200,
             keep_tail=False,
         )
@@ -4881,6 +4887,18 @@ class SkillExecutor:
                 effective_substyle,
             )
         ).strip()
+
+    def _load_style_package_file(self, filename: str, genre: str = "", substyle: str = "") -> str:
+        """从题材/子风格独立包读取文件(子风格级物理隔离,无共享层)。"""
+        try:
+            from services.project_prompt_store import resolve_style_package_dir
+            pkg_dir = resolve_style_package_dir(
+                genre or self._get_project_genre(),
+                substyle or self._get_project_substyle(),
+            )
+            return self._safe_text(self._read_file(pkg_dir / filename))
+        except Exception:
+            return ""
 
     def _load_template(self, template_name: str) -> str:
         """加载模板文件"""

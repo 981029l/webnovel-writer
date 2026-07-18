@@ -11,7 +11,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from services.genre_catalog import canonical_genre_id, canonical_substyle_id, get_genre_bucket
+from services.genre_catalog import (
+    canonical_genre_id,
+    canonical_substyle_id,
+    get_genre_bucket,
+    get_substyle_entry,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parents[2]
@@ -149,30 +154,23 @@ def _save_meta(project_root: Path, meta: Dict[str, Any]) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _resolve_default_source(slot_id: str, genre: str, substyle: str) -> Optional[Path]:
+def resolve_style_package_dir(genre: str, substyle: str = "") -> Path:
+    """定位子风格独立包目录。子风格缺省时回退该题材默认子风格。"""
     normalized_genre = canonical_genre_id(genre) or "玄幻"
-    normalized_substyle = canonical_substyle_id(normalized_genre, substyle)
     bucket = get_genre_bucket(normalized_genre) or "xuanhuan"
+    normalized_substyle = canonical_substyle_id(normalized_genre, substyle)
+    if not normalized_substyle:
+        entry = get_substyle_entry(normalized_genre) or {}
+        normalized_substyle = str(entry.get("id", "") or "")
+    return DEFAULT_PROMPTS_DIR / "genres" / bucket / normalized_substyle
 
-    if slot_id == "writer_base":
-        return DEFAULT_PROMPTS_DIR / "writer.md"
-    if slot_id == "review":
-        return DEFAULT_PROMPTS_DIR / "review.md"
-    if slot_id == "extract_state":
-        return DEFAULT_PROMPTS_DIR / "extract_state.md"
-    if slot_id == "genre_writer":
-        return DEFAULT_PROMPTS_DIR / "genres" / bucket / "writer.md"
-    if slot_id == "substyle_writer":
-        if not normalized_substyle:
-            return None
-        return DEFAULT_PROMPTS_DIR / "genres" / bucket / "substyles" / f"{normalized_substyle}.md"
-    if slot_id == "chapter_hard_constraints":
-        return DEFAULT_PROMPTS_DIR / "chapter-hard-constraints.md"
-    if slot_id == "writing_user_prompt":
-        return DEFAULT_PROMPTS_DIR / "writing-user-prompt.md"
-    if slot_id == "polish":
-        return DEFAULT_PROMPTS_DIR / "polish.md"
-    return None
+
+def _resolve_default_source(slot_id: str, genre: str, substyle: str) -> Optional[Path]:
+    """所有槽位默认内容一律来自子风格独立包(无共享层)。"""
+    slot = PROMPT_SLOT_MAP.get(slot_id)
+    if not slot:
+        return None
+    return resolve_style_package_dir(genre, substyle) / slot["filename"]
 
 
 def _default_slot_content(slot_id: str, genre: str, substyle: str) -> Dict[str, str]:

@@ -79,24 +79,24 @@ allowed-tools: Read Write Edit Grep Bash Task
 cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/core-constraints.md"
 ```
 
-**按需加载场景参考**:
+**按需加载场景参考**（一律读**当前题材/子风格的独立包**，路径为 `prompts/genres/<题材bucket>/<子风格>/`，题材与子风格取自 state.json；下例以玄幻·热血升级流示意）:
 
 | 场景类型 | 判断条件 | 执行命令 |
 |---------|---------|---------|
-| 战斗戏 | 大纲含打斗/对决/追逐 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/combat-scenes.md"` |
-| 情感戏 | 大纲含告白/冲突/羁绊 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/emotion-psychology.md"` |
-| 对话密集 | 预估对话 >50% | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/dialogue-writing.md"` |
-| 复杂场景 | 新地点/大场面描写 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/scene-description.md"` |
-| 欲念描写 | 大纲含暧昧/亲密/情欲场景 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/desire-description.md"` |
+| 战斗戏 | 大纲含打斗/对决/追逐 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/combat-scenes.md"` |
+| 情感戏 | 大纲含告白/冲突/羁绊 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/emotion-psychology.md"` |
+| 对话密集 | 预估对话 >50% | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/dialogue-writing.md"` |
+| 复杂场景 | 新地点/大场面描写 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/scene-description.md"` |
+| 欲念描写 | 大纲含暧昧/亲密/情欲场景 | `cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/desire-description.md"` |
 
-**强制加载题材风格 prompt**（根据 state.json 中的 genre 字段自动选择）:
+> 子风格级物理隔离：每个子风格包内的参考文件只含本题材口吻，禁止读取其他题材/子风格目录下的任何文件。
+
+**强制加载题材风格 prompt**（根据 state.json 中的 genre/substyle 字段定位子风格独立包）:
 ```bash
-# ⚠️ 必须加载！题材风格 prompt 是防止氛围跑偏的核心锚定
-# 从 state.json 读取 genre 字段，加载对应题材的 writer.md
-cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/{genre}/writer.md"
-
-# 如果有子风格(substyle)，同时加载子风格 prompt
-# cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/{genre}/substyles/{substyle}.md"
+# ⚠️ 必须加载！题材协议+子风格协议是防止氛围跑偏的核心锚定
+# 从 state.json 读取 genre/substyle，加载对应子风格包内的两份协议
+cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/{bucket}/{substyle}/genre-writer.md"
+cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/{bucket}/{substyle}/substyle-writer.md"
 ```
 
 **可用题材**: xuanhuan(玄幻)、dog-blood-romance(狗血言情)、period-drama(古言)、realistic(都市现实)、zhihu-short(知乎短篇)、rules-mystery(规则怪谈)、dark(黑暗题材)
@@ -216,7 +216,7 @@ Phase C: 整章重新生成（最多 1 次）
 **每轮执行**:
 1. 加载润色指南：
 ```bash
-cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/polish-guide.md"
+cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/polish-guide.md"
 ```
 2. 对仍有问题的段落/场景做**深度改写**（可调整叙事结构、重写对话、重组节奏）
 3. 润色红线仍然有效（不改情节走向、不改实力设定、不删伏笔）
@@ -280,8 +280,8 @@ cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/polish-guide.md"
 
 **执行命令（不可跳过）**:
 ```bash
-cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/polish-guide.md"
-cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/references/writing/typesetting.md"
+cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/polish-guide.md"
+cat "${CLAUDE_PLUGIN_ROOT}/skills/webnovel-write/prompts/genres/<bucket>/<子风格>/typesetting.md"
 ```
 
 如果未执行以上命令，视为润色步骤无效。
