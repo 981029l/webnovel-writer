@@ -2,7 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const backendPort = process.env.BACKEND_PORT || '8081'
+const backendPort = process.env.BACKEND_PORT || '8080'
 const backendTarget = process.env.VITE_BACKEND_TARGET || `http://127.0.0.1:${backendPort}`
 
 // https://vite.dev/config/

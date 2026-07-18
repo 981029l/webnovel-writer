@@ -1,22 +1,79 @@
 <script setup>
 // Copyright (c) 2026 左岚. All rights reserved.
-import { ref, onMounted, computed } from 'vue'
+// EntityView.vue - 全景设定集(chips 筛选 + 卡片墙 + 详情抽屉)
+import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { Inbox, Search, X, ChevronRight } from 'lucide-vue-next'
 import { entitiesApi } from '../api'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const entities = ref([])
 const loading = ref(true)
 const selectedType = ref('all')
 const entityTypes = ref([])
+const searchText = ref('')
 
 // Drawer state
 const selectedEntity = ref(null)
 const isDrawerOpen = ref(false)
 
+const typeMeta = {
+    character: { label: '角色', dot: 'var(--cat-main-dot)' },
+    location: { label: '地点', dot: 'var(--cat-sec-dot)' },
+    item: { label: '物品', dot: 'var(--warning)' },
+    faction: { label: '势力', dot: 'var(--success)' },
+    skill: { label: '招式/技能', dot: 'var(--cat-vil-dot)' },
+    foreshadowing: { label: '伏笔', dot: 'var(--primary)' },
+}
+
+function typeLabel(type) {
+    return typeMeta[type]?.label || type || '未知'
+}
+
+function typeDot(type) {
+    return typeMeta[type]?.dot || 'var(--cat-un-dot)'
+}
+
+const typeChips = computed(() => {
+    const chips = [{ id: 'all', label: '全部', count: entities.value.length, dot: null }]
+    entityTypes.value.forEach(t => {
+        const id = t.id || t
+        chips.push({
+            id,
+            label: t.name || typeLabel(id),
+            count: entities.value.filter(e => e.type === id).length,
+            dot: typeDot(id),
+        })
+    })
+    return chips
+})
+
+const filteredEntities = computed(() => {
+    let list = entities.value
+    if (selectedType.value !== 'all') {
+        list = list.filter(e => e.type === selectedType.value)
+    }
+    const kw = searchText.value.trim().toLowerCase()
+    if (kw) {
+        list = list.filter(e =>
+            (e.name || '').toLowerCase().includes(kw) ||
+            (e.description || '').toLowerCase().includes(kw)
+        )
+    }
+    return list
+})
+
+function renderMd(text) {
+    if (!text) return ''
+    return DOMPurify.sanitize(marked.parse(text, { breaks: true }))
+}
+
+const drawerHtml = computed(() => renderMd(selectedEntity.value?.description || ''))
+
 async function loadEntities() {
     loading.value = true
     try {
-        const params = selectedType.value !== 'all' ? { type: selectedType.value } : {}
-        const { data } = await entitiesApi.getAll(params)
+        const { data } = await entitiesApi.getAll({})
         entities.value = data.entities || []
     } catch (e) {
         console.error('Failed to load entities:', e)
@@ -41,391 +98,522 @@ function openDrawer(entity) {
 
 function closeDrawer() {
     isDrawerOpen.value = false
-    setTimeout(() => { selectedEntity.value = null }, 300)
-}
-const getCategoryIcon = (type) => {
-    switch(type) {
-        case '角色': case 'character': return '👤'
-        case '地点': case 'location': return '📍'
-        case '物品': case 'item': return '🎁'
-        case '势力': case 'faction': return '🏰'
-        case '功法': case 'skill': return '⚔️'
-        case '伏笔': case 'foreshadowing': return '🔮'
-        default: return '📌'
-    }
+    setTimeout(() => { if (!isDrawerOpen.value) selectedEntity.value = null }, 250)
 }
 
-const getCategoryName = (type) => {
-    switch(type) {
-        case 'character': return '角色'
-        case 'location': return '地点'
-        case 'item': return '物品'
-        case 'faction': return '势力'
-        case 'skill': return '招式/技能'
-        case 'foreshadowing': return '伏笔'
-        default: return type
-    }
+function handleKeydown(e) {
+    if (e.key === 'Escape' && isDrawerOpen.value) closeDrawer()
 }
 
 onMounted(async () => {
+    window.addEventListener('keydown', handleKeydown)
     await loadTypes()
     await loadEntities()
+})
+
+onUnmounted(() => {
+    window.removeEventListener('keydown', handleKeydown)
 })
 </script>
 
 <template>
-    <div class="entity-view" :class="{ 'drawer-open': isDrawerOpen }">
-        <header class="page-header glass-panel">
-            <div class="header-content">
-                <h1>📚 全景设定集</h1>
-                <p class="subtitle">管理角色、地点、道具等世界设定枢纽</p>
-            </div>
-            <div class="filter-bar">
-                <select v-model="selectedType" @change="loadEntities" class="glass-select">
-                    <option value="all">👁️ 全部类型</option>
-                    <option v-for="t in entityTypes" :key="t.id || t" :value="t.id || t">{{ t.icon || getCategoryIcon(t.name || t) }} {{ t.name || t }}</option>
-                </select>
+    <div class="entity-view">
+        <header class="page-header">
+            <div class="header-left">
+                <h1>全景设定集</h1>
+                <p class="subtitle">AI 从章节中自动提取的角色、地点、道具与伏笔档案</p>
             </div>
         </header>
 
-        <div v-if="loading" class="loading glass-panel">
-            <div class="spinner"></div>
-            <p>正在同步天地法则...</p>
-        </div>
-        
-        <div v-else-if="entities.length === 0" class="empty-state glass-panel">
-            <div class="empty-icon">📭</div>
-            <h2>暂无设定数据</h2>
-            <p class="hint">当您开始撰写章节时，AI 将自动从文字中提取并收容实体信息。</p>
+        <!-- 类型 chips + 搜索 -->
+        <div class="filter-row">
+            <div class="type-chips" role="tablist">
+                <button
+                    v-for="chip in typeChips"
+                    :key="chip.id"
+                    role="tab"
+                    :aria-selected="selectedType === chip.id"
+                    :class="{ active: selectedType === chip.id }"
+                    @click="selectedType = chip.id"
+                >
+                    <span v-if="chip.dot" class="chip-dot" :style="{ background: chip.dot }"></span>
+                    {{ chip.label }}
+                    <span class="count tnum">{{ chip.count }}</span>
+                </button>
+            </div>
+            <div class="search-wrap">
+                <Search :size="14" :stroke-width="1.75" class="search-icon" />
+                <input v-model="searchText" class="search-input" placeholder="搜索名称或描述..." />
+                <button v-if="searchText" class="search-clear" @click="searchText = ''" aria-label="清空搜索">
+                    <X :size="13" :stroke-width="2" />
+                </button>
+            </div>
         </div>
 
-        <div v-else class="masonry-grid">
-            <div v-for="entity in entities" :key="entity.id" class="entity-card glass-card" @click="openDrawer(entity)">
-                <div class="card-header">
-                    <span class="entity-type-badge">
-                        {{ getCategoryIcon(entity.type) }} {{ getCategoryName(entity.type) }}
+        <!-- 加载骨架 -->
+        <div v-if="loading" class="cards-grid">
+            <div v-for="n in 6" :key="n" class="skeleton sk-card"></div>
+        </div>
+
+        <!-- 空状态 -->
+        <div v-else-if="filteredEntities.length === 0" class="empty">
+            <Inbox :size="36" :stroke-width="1.25" class="empty-icon" />
+            <template v-if="searchText || selectedType !== 'all'">
+                <p>没有匹配的设定条目</p>
+                <button class="btn btn-secondary btn-sm" @click="searchText = ''; selectedType = 'all'">清空筛选</button>
+            </template>
+            <template v-else>
+                <p>暂无设定数据</p>
+                <p class="empty-hint">开始撰写章节后，AI 将自动从文字中提取实体信息</p>
+            </template>
+        </div>
+
+        <!-- 卡片墙 -->
+        <div v-else class="cards-grid">
+            <div
+                v-for="entity in filteredEntities"
+                :key="entity.id"
+                class="e-card"
+                role="button"
+                tabindex="0"
+                @click="openDrawer(entity)"
+                @keydown.enter="openDrawer(entity)"
+            >
+                <div class="e-card-top">
+                    <span class="type-tag">
+                        <span class="chip-dot" :style="{ background: typeDot(entity.type) }"></span>
+                        {{ typeLabel(entity.type) }}
                     </span>
-                    <span class="entity-chapter-badge" v-if="entity.first_appearance">
-                        初始卷章: {{ entity.first_appearance }}
-                    </span>
+                    <span v-if="entity.first_appearance" class="chapter-tag tnum">{{ entity.first_appearance }}</span>
                 </div>
-                <h3 class="entity-title">{{ entity.name }}</h3>
-                <p class="entity-desc">{{ entity.description || '暂无描述' }}</p>
-                <div class="card-footer">
-                    <button class="view-btn">查看宗卷 →</button>
+                <h3 class="e-title">{{ entity.name }}</h3>
+                <p class="e-desc">{{ entity.description || '暂无描述' }}</p>
+                <div class="e-card-foot">
+                    <span class="e-open">查看详情 <ChevronRight :size="12" :stroke-width="2" /></span>
                 </div>
             </div>
         </div>
 
-        <!-- Glassmorphism Drawer -->
-        <div class="drawer-overlay" :class="{ 'active': isDrawerOpen }" @click="closeDrawer"></div>
-        <div class="entity-drawer glass-drawer" :class="{ 'open': isDrawerOpen }">
-            <div v-if="selectedEntity" class="drawer-content">
-                <button class="close-btn" @click="closeDrawer">×</button>
-                
-                <div class="drawer-header">
-                    <span class="drawer-badge">{{ getCategoryIcon(selectedEntity.type) }} {{ getCategoryName(selectedEntity.type) }}</span>
-                    <h2 class="drawer-title">{{ selectedEntity.name }}</h2>
+        <!-- 详情抽屉 -->
+        <div class="drawer-overlay" :class="{ active: isDrawerOpen }" @click="closeDrawer"></div>
+        <aside class="detail-drawer" :class="{ open: isDrawerOpen }" role="dialog" aria-modal="true">
+            <template v-if="selectedEntity">
+                <div class="drawer-head">
+                    <div class="drawer-title-row">
+                        <span class="type-tag">
+                            <span class="chip-dot" :style="{ background: typeDot(selectedEntity.type) }"></span>
+                            {{ typeLabel(selectedEntity.type) }}
+                        </span>
+                        <h2 class="drawer-name">{{ selectedEntity.name }}</h2>
+                    </div>
+                    <button class="drawer-close" @click="closeDrawer" aria-label="关闭">
+                        <X :size="16" :stroke-width="1.75" />
+                    </button>
                 </div>
-                
+
                 <div class="drawer-body">
-                    <div class="info-section">
-                        <h4>基本描述</h4>
-                        <div class="markdown-preview glass-inset">
-                            <!-- TODO: 以后接入完整的Markdown编辑器，目前只做纯文本显示 -->
-                            <p v-for="(line, idx) in (selectedEntity.description || '').split('\n')" :key="idx" class="markdown-paragraph">
-                                {{ line }}
-                            </p>
+                    <div v-if="selectedEntity.first_appearance" class="drawer-section">
+                        <h4 class="section-label">初次出现</h4>
+                        <div class="info-cell">
+                            <span class="info-value tnum">{{ selectedEntity.first_appearance }}</span>
                         </div>
                     </div>
+                    <div class="drawer-section">
+                        <h4 class="section-label">描述</h4>
+                        <div v-if="selectedEntity.description" class="md-box md-render" v-html="drawerHtml"></div>
+                        <div v-else class="md-box md-empty">暂无描述</div>
+                    </div>
                 </div>
-            </div>
-        </div>
+            </template>
+        </aside>
     </div>
 </template>
 
 <style scoped>
-/* Page Layout */
 .entity-view {
     max-width: 1400px;
     margin: 0 auto;
-    padding: 2rem;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    background-color: #f3f4f6; /* light gray backend bg */
-    min-height: calc(100vh - 4rem);
-    color: #111827;
+    padding: 1.5rem 2rem 3rem;
+    min-height: 100%;
+    color: var(--ink-primary);
 }
 
-.entity-view.drawer-open {
-    transform: scale(0.98) translateX(-10px);
-}
-
-/* Light Theme Utilities */
-.glass-panel, .glass-card, .glass-drawer, .glass-inset {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-
-.glass-select {
-    background-color: #ffffff;
-    border: 1px solid #d1d5db;
-    color: #111827;
-}
-
-/* Header */
+/* ── 头部 ── */
 .page-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    border-radius: 12px;
-    padding: 1.5rem 2rem;
-    margin-bottom: 2.5rem;
-}
-
-.header-content h1 {
-    font-size: 2rem;
-    margin-bottom: 0.5rem;
-    color: #111827;
-    font-weight: 800;
-}
-
-.subtitle { color: #6b7280; font-size: 1rem; margin: 0; }
-
-.glass-select {
-    padding: 0.75rem 1.25rem;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    cursor: pointer;
-    outline: none;
-    transition: all 0.2s;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%236b7280%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
-    background-repeat: no-repeat;
-    background-position: right .7rem top 50%;
-    background-size: .65rem auto;
-    padding-right: 2.5rem;
-}
-
-.glass-select:hover { border-color: #9ca3af; }
-
-/* Grid / Masonry Layout */
-.masonry-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    align-items: flex-start;
     gap: 1.5rem;
-    align-items: start;
-}
-
-/* Cards */
-.entity-card {
-    border-radius: 12px;
-    padding: 1.5rem;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    cursor: pointer;
-    position: relative;
-    overflow: hidden;
-}
-
-.entity-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-    border-color: #a5b4fc;
-}
-
-.card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     margin-bottom: 1rem;
 }
 
-.entity-type-badge {
-    font-size: 0.75rem;
+.header-left h1 {
+    font-size: 1.375rem;
     font-weight: 600;
-    color: #6b5840;
-    background: #f0ebe3;
-    padding: 0.3rem 0.6rem;
-    border-radius: 20px;
-    border: 1px solid #c7d2fe;
+    letter-spacing: -0.01em;
+    color: var(--ink-primary);
+    margin: 0 0 0.25rem;
 }
 
-.entity-chapter-badge {
-    font-size: 0.7rem;
-    color: #6b7280;
-    background: #f3f4f6;
+.subtitle { color: var(--ink-muted); font-size: 0.875rem; margin: 0; }
+
+/* ── chips + 搜索 ── */
+.filter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    padding-bottom: 0.875rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.type-chips {
+    display: flex;
+    gap: 0.25rem;
+    overflow-x: auto;
+    flex: 1;
+    min-width: 0;
+    scrollbar-width: none;
+}
+.type-chips::-webkit-scrollbar { display: none; }
+
+.type-chips button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    background: none;
+    border: 1px solid transparent;
+    padding: 0.4rem 0.7rem;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    color: var(--ink-secondary);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+}
+.type-chips button:hover { background: var(--hover); color: var(--ink-primary); }
+.type-chips button.active { background: var(--primary-tint); color: var(--primary-on-tint); }
+
+.chip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+.count {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum";
+    background: var(--surface);
+    color: var(--ink-muted);
+    padding: 0 0.4rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.6875rem;
+    font-weight: 500;
+}
+.type-chips button.active .count { background: var(--card); color: var(--primary-on-tint); }
+
+.search-wrap { position: relative; display: flex; align-items: center; flex-shrink: 0; }
+.search-icon { position: absolute; left: 0.6rem; color: var(--ink-muted); pointer-events: none; }
+
+.search-input {
+    width: 210px;
+    padding: 0.4rem 1.75rem 0.4rem 2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--ink-primary);
+    font-size: 0.8125rem;
+    outline: none;
+    transition: border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+}
+.search-input:focus {
+    border-color: var(--primary);
+    background: var(--card);
+    box-shadow: 0 0 0 3px var(--primary-tint);
+}
+.search-input::placeholder { color: var(--ink-muted); }
+
+.search-clear {
+    position: absolute;
+    right: 0.4rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px; height: 18px;
+    border: none;
+    background: var(--hover);
+    color: var(--ink-muted);
+    border-radius: 50%;
+    cursor: pointer;
+}
+.search-clear:hover { color: var(--ink-primary); }
+
+/* ── 卡片墙 ── */
+.cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+    align-content: start;
+}
+
+.e-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.875rem 1rem;
+    cursor: pointer;
+    transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    min-width: 0;
+}
+
+.e-card:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-md);
+}
+
+.e-card:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.e-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.type-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+}
+
+.chapter-tag {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum";
+    font-size: 0.6875rem;
+    color: var(--ink-muted);
+    background: var(--surface);
     padding: 0.2rem 0.5rem;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.entity-title {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #111827;
-    margin-bottom: 0.75rem;
-    line-height: 1.3;
+.e-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ink-primary);
+    margin: 0;
+    line-height: 1.35;
 }
 
-.entity-desc {
-    font-size: 0.95rem;
-    color: #4b5563;
+.e-desc {
+    font-size: 0.8125rem;
+    color: var(--ink-secondary);
     line-height: 1.6;
-    margin-bottom: 1.5rem;
+    margin: 0;
     display: -webkit-box;
-    -webkit-line-clamp: 4;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
 
-.card-footer {
+.e-card-foot {
     display: flex;
     justify-content: flex-end;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+    margin-top: auto;
 }
 
-.view-btn {
-    background: transparent;
-    border: none;
-    color: #6b5840;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    padding: 0;
-    transition: color 0.2s, transform 0.2s;
+.e-open {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.15rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--primary-text);
+    opacity: 0;
+    transform: translateX(-3px);
+    transition: opacity var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard);
 }
+.e-card:hover .e-open { opacity: 1; transform: translateX(0); }
 
-.entity-card:hover .view-btn {
-    color: #5c4a32;
-    transform: translateX(3px);
-}
-
-/* States */
-.loading, .empty-state {
-    text-align: center;
-    padding: 5rem 2rem;
-    border-radius: 12px;
+/* ── 空状态 / 骨架 ── */
+.empty {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    text-align: center;
+    padding: 3.5rem 1rem;
+    color: var(--ink-secondary);
+    gap: 0.625rem;
+    font-size: 0.9375rem;
 }
+.empty-hint { font-size: 0.8125rem; color: var(--ink-muted); margin: 0; }
+.empty-icon { color: var(--ink-muted); opacity: 0.6; }
+.empty .btn { margin-top: 0.375rem; }
 
-.spinner {
-    width: 40px; height: 40px;
-    border: 3px solid #e5e7eb;
-    border-top-color: #6b5840;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin-bottom: 1rem;
-}
+.sk-card { height: 132px; border-radius: var(--radius-lg); }
 
-@keyframes spin { 100% { transform: rotate(360deg); } }
-
-.empty-icon { font-size: 4rem; margin-bottom: 1rem; color: #9ca3af; }
-.empty-state h2 { font-size: 1.5rem; color: #111827; margin-bottom: 0.5rem; }
-.hint { color: #6b7280; }
-
-/* Drawer Component */
+/* ── 详情抽屉 ── */
 .drawer-overlay {
     position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(17, 24, 39, 0.5); /* darker backdrop for white drawer */
-    backdrop-filter: blur(2px);
-    -webkit-backdrop-filter: blur(2px);
-    z-index: 99;
+    inset: 0;
+    background: rgb(15 17 21 / 0.45);
+    z-index: var(--z-modal-backdrop);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.3s ease;
+    transition: opacity var(--dur-base) ease;
 }
+.drawer-overlay.active { opacity: 1; pointer-events: auto; }
 
-.drawer-overlay.active {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.entity-drawer {
+.detail-drawer {
     position: fixed;
     top: 0; right: 0; bottom: 0;
-    width: 500px;
-    max-width: 90vw;
-    z-index: 100;
+    width: 520px;
+    max-width: 92vw;
+    background: var(--card);
+    border-left: 1px solid var(--border);
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    z-index: var(--z-modal);
     transform: translateX(100%);
-    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-    border-left: 1px solid #e5e7eb;
-    border-radius: 24px 0 0 24px;
-    padding: 2.5rem;
-    overflow-y: auto;
-    background: #ffffff; 
+    transition: transform 0.28s var(--ease-emerge);
+    display: flex;
+    flex-direction: column;
 }
-
-.entity-drawer.open {
+.detail-drawer.open {
     transform: translateX(0);
-    box-shadow: -20px 0 60px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-xl);
 }
 
-.close-btn {
-    position: absolute;
-    top: 1.5rem; right: 1.5rem;
-    background: #f3f4f6;
-    border: 1px solid #d1d5db;
-    color: #4b5563;
-    width: 36px; height: 36px;
-    border-radius: 50%;
-    font-size: 1.2rem;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-    transition: all 0.2s;
+.drawer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
 }
 
-.close-btn:hover {
-    background: #e5e7eb;
-    color: #111827;
-    transform: rotate(90deg);
-}
+.drawer-title-row { display: flex; align-items: center; gap: 0.625rem; min-width: 0; }
 
-.drawer-header {
-    margin-bottom: 2rem;
-    padding-right: 2rem;
-}
-
-.drawer-badge {
-    display: inline-block;
-    font-size: 0.85rem;
-    color: #6b5840;
-    background: #f0ebe3;
-    padding: 0.4rem 0.8rem;
-    border-radius: 6px;
-    margin-bottom: 1rem;
-}
-
-.drawer-title {
-    font-size: 2.2rem;
-    font-weight: 800;
-    color: #111827;
-    line-height: 1.2;
-}
-
-.info-section h4 {
-    font-size: 1.1rem;
-    color: #111827;
-    margin-bottom: 1rem;
+.drawer-name {
+    font-size: 1.125rem;
     font-weight: 600;
+    color: var(--ink-primary);
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.glass-inset {
-    background: #f9fafb;
-    border-radius: 12px;
-    padding: 1.5rem;
-    border: 1px solid #e5e7eb;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+.drawer-close {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px; height: 30px;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--ink-muted);
+    cursor: pointer;
+    transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+}
+.drawer-close:hover { color: var(--ink-primary); background: var(--hover); }
+
+.drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
 }
 
-.markdown-paragraph {
-    color: #374151;
-    line-height: 1.7;
-    margin-bottom: 1rem;
-    font-size: 1rem;
+.drawer-section { display: flex; flex-direction: column; gap: 0.625rem; }
+
+.section-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--ink-muted);
+    margin: 0;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
 }
-.markdown-paragraph:last-child { margin-bottom: 0; }
+
+.info-cell {
+    display: inline-flex;
+    padding: 0.5rem 0.7rem;
+    background: var(--surface);
+    border-radius: var(--radius-md);
+    align-self: flex-start;
+}
+
+.info-value { font-size: 0.8125rem; font-weight: 500; color: var(--ink-primary); }
+
+.md-box {
+    background: var(--surface);
+    border-radius: var(--radius-md);
+    padding: 1rem 1.1rem;
+}
+.md-empty { color: var(--ink-muted); font-size: 0.8125rem; }
+
+/* Markdown 渲染 */
+.md-render { font-size: 0.875rem; line-height: 1.75; color: var(--ink-secondary); }
+.md-render :deep(p) { margin: 0 0 0.625rem; }
+.md-render :deep(p:last-child) { margin-bottom: 0; }
+.md-render :deep(h1),
+.md-render :deep(h2),
+.md-render :deep(h3),
+.md-render :deep(h4) {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--ink-primary);
+    margin: 1rem 0 0.5rem;
+}
+.md-render :deep(h1:first-child),
+.md-render :deep(h2:first-child),
+.md-render :deep(h3:first-child) { margin-top: 0; }
+.md-render :deep(ul),
+.md-render :deep(ol) { margin: 0.25rem 0 0.625rem; padding-left: 1.375rem; }
+.md-render :deep(li) { margin-bottom: 0.25rem; }
+.md-render :deep(strong) { font-weight: 600; color: var(--ink-primary); }
+.md-render :deep(code) {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    background: var(--hover);
+    border-radius: var(--radius-sm);
+    padding: 0.1em 0.35em;
+}
+.md-render :deep(blockquote) {
+    margin: 0.5rem 0;
+    padding-left: 0.875rem;
+    border-left: 3px solid var(--border-strong);
+    color: var(--ink-muted);
+}
+.md-render :deep(hr) { border: none; border-top: 1px solid var(--border); margin: 0.875rem 0; }
+
+/* ── 响应式 ── */
+@media (max-width: 960px) {
+    .entity-view { padding: 1rem; }
+    .filter-row { flex-direction: column; align-items: stretch; }
+    .search-wrap { width: 100%; }
+    .search-input { width: 100%; }
+    .cards-grid { grid-template-columns: 1fr; }
+    .detail-drawer { width: 100vw; max-width: 100vw; border-radius: 0; }
+}
 </style>

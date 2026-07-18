@@ -55,3 +55,7 @@ yarn-error.log*
 .claude/settings.local.json
 .claude/plans/
 ecosystem.config.cjs
+
+# local screenshots
+frontend/shots/
+frontend/.shot-*.png

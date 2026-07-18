@@ -1,10 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI网文助手</title>
+    <title>Webnovel Writer - AI 网文创作工作台</title>
+    <script>
+      // 在应用挂载前应用主题,避免暗色模式闪白;支持 ?theme=dark|light 预览
+      (function () {
+        try {
+          var q = new URLSearchParams(location.search).get('theme')
+          var t = (q === 'dark' || q === 'light') ? q : localStorage.getItem('wnw-theme')
+          if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          document.documentElement.dataset.theme = t
+        } catch (e) { /* ignore */ }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

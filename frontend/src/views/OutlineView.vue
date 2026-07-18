@@ -7,6 +7,9 @@ import { useAiTaskStore } from '../stores/aiTask'
 import { useProjectStore } from '../stores/project'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import InputDialog from '../components/InputDialog.vue'
+import { FileText, Columns3, Wand2, Save, FolderOpen, Eye } from 'lucide-vue-next'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const outlines = ref([])
 const totalOutline = ref(null)
@@ -20,6 +23,13 @@ const showSidebar = ref(true)
 
 // View Mode: 'text' or 'kanban'
 const viewMode = ref('text')
+
+// 预览视图:渲染 Markdown
+const previewHtml = computed(() => {
+  const text = editContent.value || ''
+  if (!text.trim()) return ''
+  return DOMPurify.sanitize(marked.parse(text, { breaks: true }))
+})
 const cards = ref([])
 const dragIndex = ref(null)
 
@@ -54,13 +64,13 @@ watch(editContent, (newVal) => {
     }
 })
 
-watch(viewMode, (newMode) => {
+watch(viewMode, (newMode, oldMode) => {
     if (newMode === 'kanban') {
         // Parse text into cards
         const blocks = (editContent.value || '').split(/\n\s*\n/).filter(b => b.trim())
         cards.value = blocks.map((b, i) => ({ id: i, text: b.trim() }))
-    } else {
-        // Sync back to text
+    } else if (oldMode === 'kanban') {
+        // 仅在离开看板时用卡片回写文本;预览是只读视图,不得改写 editContent
         editContent.value = cards.value.map(c => c.text).join('\n\n')
     }
 })
@@ -138,7 +148,7 @@ watch(() => aiTaskStore?.result, async (newResult) => {
 watch(() => projectStore.projectRoot, async (newRoot) => {
   if (newRoot) {
     if (aiTaskStore.isRunning) return
-    message.value = '🔄 正在同步项目大纲...'
+    message.value = '正在同步项目大纲...'
     selectedVolume.value = null
     await loadOutlines()
   }
@@ -478,18 +488,19 @@ async function executeAiPolish(volume, requirements) {
           <div class="header-actions">
             <!-- 视图切换 -->
             <div class="view-toggle tabs-panel">
-                <button :class="{'active': viewMode === 'text'}" @click="viewMode = 'text'" title="文本编辑视图">📄 文本</button>
-                <button :class="{'active': viewMode === 'kanban'}" @click="viewMode = 'kanban'" title="看板拖拽视图">🗂️ 看板</button>
+                <button :class="{'active': viewMode === 'text'}" @click="viewMode = 'text'" title="文本编辑视图"><FileText :size="14" :stroke-width="1.5" /> 文本</button>
+                <button :class="{'active': viewMode === 'kanban'}" @click="viewMode = 'kanban'" title="看板拖拽视图"><Columns3 :size="14" :stroke-width="1.5" /> 看板</button>
+                <button :class="{'active': viewMode === 'preview'}" @click="viewMode = 'preview'" title="Markdown 预览"><Eye :size="14" :stroke-width="1.5" /> 预览</button>
             </div>
 
             <button class="btn btn-ai outline-btn" @click="aiPlanVolume" :disabled="aiPlanning">
-              ✨ {{ selectedVolume === 'total' ? 'AI 智能规划' : 'AI 规划本卷' }}
+              {{ selectedVolume === 'total' ? 'AI 智能规划' : 'AI 规划本卷' }}
             </button>
             <button class="btn btn-secondary outline-btn" @click="polishOutline" :disabled="aiPlanning || !editContent" title="润色当前大纲">
-               🪄 润色
+               <Wand2 :size="16" :stroke-width="1.5" /> 润色
             </button>
             <button class="btn btn-primary primary-btn" @click="saveOutline" :disabled="saving">
-              💾 {{ saving ? '保存中...' : '保存' }}
+              <Save :size="16" :stroke-width="1.5" /> {{ saving ? '保存中...' : '保存' }}
             </button>
           </div>
         </header>
@@ -533,8 +544,14 @@ async function executeAiPolish(volume, requirements) {
                   </div>
               </div>
           </div>
+
+          <!-- Preview Mode -->
+          <div v-show="viewMode === 'preview'" class="preview-pane">
+            <div v-if="previewHtml" class="md-render" v-html="previewHtml"></div>
+            <div v-else class="preview-empty">暂无内容，切到「文本」开始编写</div>
+          </div>
         </div>
-        
+
         <!-- 状态提示 -->
         <div v-if="message" class="toast-message" :class="{ error: message.startsWith('✗') }">
           {{ message }}
@@ -544,7 +561,7 @@ async function executeAiPolish(volume, requirements) {
       <!-- 空状态 -->
       <div v-else class="empty-state">
         <div class="empty-content theme-empty">
-          <div class="empty-icon">📂</div>
+          <div class="empty-icon"><FolderOpen :size="40" :stroke-width="1.25" /></div>
           <h3>选择或创建一个大纲</h3>
           <p>好的大纲是成功的一半。从左侧选择总纲开始规划吧。</p>
           <button class="primary-btn btn-large" @click="selectOutline('total')">打开全书总纲</button>
@@ -620,10 +637,10 @@ async function executeAiPolish(volume, requirements) {
 </template>
 
 <style scoped>
-/* Standard Clean Backend Background Foundation */
+/* 白纸内容页基座 */
 .backend-bg {
-  background-color: #f3f4f6; /* Very light gray */
-  color: #111827; /* Dark text */
+  background-color: var(--card);
+  color: var(--ink-primary);
 }
 
 .outline-layout {
@@ -636,24 +653,23 @@ async function executeAiPolish(volume, requirements) {
 /* Sidebar Specifics */
 .outline-sidebar {
   width: 280px;
-  background-color: #ffffff;
-  border-right: 1px solid #e5e7eb;
+  background-color: var(--card);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width var(--dur-base) var(--ease-standard);
   flex-shrink: 0;
   z-index: 10;
-  box-shadow: 1px 0 5px rgba(0,0,0,0.02);
 }
 .outline-sidebar.collapsed { width: 0; border: none; overflow: hidden; }
 .outline-sidebar.collapsed * { display: none; }
 
 .sidebar-header {
-  padding: 1.5rem;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
 }
 
 .header-row {
@@ -664,96 +680,98 @@ async function executeAiPolish(volume, requirements) {
 }
 
 .sidebar-title {
-  font-size: 1.2rem;
-  font-weight: 700;
+  font-size: 0.9375rem;
+  font-weight: 600;
   display: flex;
   align-items: center;
-  color: #111827;
+  color: var(--ink-primary);
   margin: 0;
 }
 
 .icon-btn.sidebar-btn {
   width: 32px; height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer;
-  background-color: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  color: #4b5563;
-  transition: all 0.2s;
+  background-color: transparent;
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
 }
 .icon-btn.sidebar-btn:hover {
-  background-color: #e5e7eb;
-  color: #111827;
+  background-color: var(--hover);
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
 }
 
 .outline-list {
   flex: 1;
   overflow-y: auto;
-  padding: 1rem;
+  padding: 0.75rem;
 }
 
 .outline-item {
   display: flex;
   align-items: center;
-  padding: 0.8rem 1rem;
-  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  margin-bottom: 6px;
-  color: #4b5563;
-  transition: all 0.2s;
-  border: 1px solid transparent;
+  margin-bottom: 2px;
+  color: var(--ink-secondary);
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+  font-weight: 400;
+  font-size: 0.875rem;
 }
 
 .outline-item:hover {
-  background-color: #f3f4f6;
+  background-color: var(--hover);
+  color: var(--ink-primary);
 }
 
 .outline-item.active {
-  background-color: #f0ebe3;
-  border-color: #c7d2fe;
-  color: #6b5840;
-  font-weight: 600;
+  background-color: var(--primary-tint);
+  color: var(--primary-on-tint);
+  font-weight: 500;
 }
 
-.item-icon { flex-shrink: 0; margin-right: 0.75rem; }
-.item-title { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+.item-icon { flex-shrink: 0; margin-right: 0.625rem; }
+.item-title { font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
 
 .item-delete-btn {
   flex-shrink: 0;
   background: none;
   border: none;
-  color: #9ca3af;
+  color: var(--ink-muted);
   cursor: pointer;
   padding: 0.25rem;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: all 0.15s;
+  transition: opacity var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
   margin-left: auto;
 }
 .outline-item:hover .item-delete-btn { opacity: 1; }
-.item-delete-btn:hover { background: #fee2e2; color: #ef4444; }
+.item-delete-btn:hover { background: var(--danger-tint); color: var(--danger); }
 .size-3-5 { width: 0.875rem; height: 0.875rem; }
 
-.total-outline { font-weight: 600; }
-.divider { height: 1px; background-color: #e5e7eb; margin: 1rem 0; }
-.section-label { font-size: 0.75rem; color: #9ca3af; padding: 0 1rem 0.5rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
-.empty-hint { font-size: 0.85rem; color: #9ca3af; text-align: center; margin-top: 1rem; }
+.total-outline { font-weight: 500; }
+.divider { height: 1px; background-color: var(--border); margin: 0.75rem 0; }
+.section-label { font-size: 0.6875rem; color: var(--ink-muted); padding: 0 0.75rem 0.4rem; font-weight: 500; }
+.empty-hint { font-size: 0.8125rem; color: var(--ink-muted); text-align: center; margin-top: 1rem; font-weight: 400; }
 
-.sidebar-footer { padding: 1rem; border-top: 1px solid #e5e7eb; display: flex; justify-content: flex-end; }
+.sidebar-footer { padding: 0.75rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
 .toggle-btn {
-  background: transparent;
-  border: none;
+  background: var(--surface);
+  border: 1px solid transparent;
   padding: 0.5rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  color: #9ca3af;
-  transition: all 0.2s;
+  color: var(--ink-secondary);
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
 }
-.toggle-btn:hover { background-color: #f3f4f6; color: #4b5563; }
+.toggle-btn:hover { background-color: var(--hover); color: var(--ink-primary); }
 
 /* Main Content area */
 .outline-main {
@@ -773,17 +791,22 @@ async function executeAiPolish(volume, requirements) {
 }
 
 .editor-header {
-  padding: 1.5rem 2.5rem;
+  padding: 1rem 2rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
+  background-color: var(--card);
+  border-bottom: 1px solid var(--border);
   z-index: 5;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
 }
 
-.volume-title { font-size: 1.5rem; font-weight: 700; color: #111827; margin: 0; }
+.volume-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
 
 .header-left {
   display: flex;
@@ -794,17 +817,18 @@ async function executeAiPolish(volume, requirements) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
-  color: #6b5840;
-  background: #f0ebe3;
-  padding: 0.35rem 0.75rem;
-  border-radius: 6px;
+  font-size: 0.8125rem;
+  color: var(--primary-on-tint);
+  background: var(--primary-tint);
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
 }
 
 .status-dot {
   width: 8px;
   height: 8px;
-  background-color: #6b5840;
+  background-color: var(--primary);
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -820,56 +844,57 @@ async function executeAiPolish(volume, requirements) {
 }
 
 .ai-status {
-  font-size: 0.9rem;
-  color: #6b5840;
+  font-size: 0.8125rem;
+  color: var(--primary-on-tint);
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin-left: 1.5rem;
-  background: #f0ebe3;
-  padding: 0.3rem 0.8rem;
-  border-radius: 20px;
+  background: var(--primary-tint);
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
 }
 
 .pulse-dot {
   width: 8px; height: 8px;
-  background-color: #6b5840;
+  background-color: var(--primary);
   border-radius: 50%;
   animation: pulse 1s infinite alternate;
 }
 @keyframes pulse { from { opacity: 0.4; } to { opacity: 1; } }
 
-.header-actions { display: flex; gap: 0.8rem; align-items: center; }
+.header-actions { display: flex; gap: 0.625rem; align-items: center; }
 
-/* View Tabs */
+/* View Tabs — 分段控件 */
 .tabs-panel {
     display: flex;
-    background-color: #f3f4f6;
-    border-radius: 8px;
+    background-color: var(--surface);
+    border-radius: var(--radius-md);
     padding: 3px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--border);
 }
 .tabs-panel button {
     background: transparent;
     border: none;
-    color: #4b5563;
-    padding: 6px 14px;
-    border-radius: 6px;
+    color: var(--ink-secondary);
+    padding: 5px 13px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 600;
-    transition: all 0.2s;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
 }
 .tabs-panel button.active {
-    background-color: #ffffff;
-    color: #111827;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    background-color: var(--card);
+    color: var(--ink-primary);
+    box-shadow: var(--shadow-sm);
 }
 
 .btn {
     padding: 0.5rem 1rem;
-    border-radius: 8px;
-    font-size: 0.9rem;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     display: flex;
@@ -877,43 +902,43 @@ async function executeAiPolish(volume, requirements) {
 }
 
 .outline-btn {
-  background-color: #ffffff;
-  border: 1px solid #d1d5db;
-  color: #374151;
-  transition: all 0.2s;
+  background-color: var(--card);
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+  transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
 }
 .outline-btn:hover:not(:disabled) {
-  background-color: #f9fafb;
-  border-color: #9ca3af;
+  background-color: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
 }
 
 .primary-btn {
-  background-color: #6b5840;
-  border: none;
-  color: white;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  transition: all 0.2s;
+  background-color: var(--primary);
+  border: 1px solid var(--primary);
+  color: var(--on-primary);
+  transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
   padding: 0.5rem 1rem;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-weight: 500;
 }
 .primary-btn:hover:not(:disabled) {
-  background-color: #5c4a32;
-  box-shadow: 0 4px 6px -1px rgba(107, 88, 64, 0.2), 0 2px 4px -1px rgba(107, 88, 64, 0.1);
+  background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 .btn-large {
-  padding: 0.8rem 1.5rem;
-  font-size: 1rem;
-  border-radius: 8px;
+  padding: 0.7rem 1.4rem;
+  font-size: 0.9375rem;
+  border-radius: var(--radius-md);
 }
 
 /* Editor Wrapper */
 .editor-wrapper {
   flex: 1;
-  overflow: hidden; 
+  overflow: hidden;
   position: relative;
-  background-color: #f9fafb;
+  background-color: var(--card);
 }
 
 .text-editor-box {
@@ -921,38 +946,41 @@ async function executeAiPolish(volume, requirements) {
   height: 100%;
   border: none;
   resize: none;
-  font-size: 1.05rem; 
+  font-size: 1rem;
   line-height: 1.8;
   outline: none;
-  font-family: 'Inter', sans-serif;
-  padding: 2.5rem 3.5rem; 
+  font-family: var(--font-ui);
+  font-weight: 400;
+  padding: 2rem 3rem;
   box-sizing: border-box;
   background-color: transparent;
-  color: #1f2937;
+  color: var(--ink-primary);
 }
 
-.text-editor-box::placeholder { color: #9ca3af; }
+.text-editor-box::placeholder { color: var(--ink-muted); }
 
 /* Kanban Board Layout */
 .kanban-board {
     width: 100%;
     height: 100%;
-    padding: 2rem 3rem;
+    padding: 1.5rem 2rem;
     overflow-y: auto;
     overflow-x: hidden;
+    background: var(--surface);
 }
 
 .kanban-empty {
     text-align: center;
-    color: #6b7280;
+    color: var(--ink-secondary);
     padding: 4rem;
-    border: 2px dashed #d1d5db;
-    border-radius: 12px;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-lg);
+    font-weight: 400;
 }
 
 .kanban-columns {
     display: flex;
-    gap: 1.5rem;
+    gap: 1rem;
     flex-wrap: wrap;
     align-items: flex-start;
 }
@@ -962,27 +990,27 @@ async function executeAiPolish(volume, requirements) {
     min-width: 300px;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.75rem;
 }
 
 /* Kanban Cards & Drag'N'Drop */
 .theme-card {
-    background-color: #ffffff;
-    border: 1px solid #e5e7eb;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    background-color: var(--card);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
 }
 
 .kanban-card {
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     padding: 1rem 1rem 1rem 2.5rem;
     position: relative;
     cursor: grab;
-    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    transition: box-shadow var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard);
 }
 
 .kanban-card:hover {
-    border-color: #a5b4fc;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-md);
 }
 
 .kanban-card:active {
@@ -991,7 +1019,7 @@ async function executeAiPolish(volume, requirements) {
 
 .kanban-card.dragging {
     opacity: 0.5;
-    transform: scale(0.98);
+    box-shadow: var(--shadow-lg);
 }
 
 .card-drag-handle {
@@ -999,25 +1027,80 @@ async function executeAiPolish(volume, requirements) {
     left: 10px;
     top: 50%;
     transform: translateY(-50%);
-    color: #9ca3af;
+    color: var(--ink-muted);
     font-weight: bold;
     cursor: grab;
     user-select: none;
 }
-.card-drag-handle:active { cursor: grabbing; color: #6b5840; }
+.card-drag-handle:active { cursor: grabbing; color: var(--primary-text); }
 
 .card-textarea {
     width: 100%;
     min-height: 80px;
     background: transparent;
     border: none;
-    color: #374151;
+    color: var(--ink-primary);
     resize: vertical;
     outline: none;
-    font-family: 'Inter', sans-serif;
-    font-size: 0.95rem;
+    font-family: var(--font-ui);
+    font-size: 0.9375rem;
+    font-weight: 400;
     line-height: 1.6;
 }
+
+/* Preview Mode — Markdown 渲染预览 */
+.preview-pane {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 2rem 3rem;
+  background: var(--card);
+}
+
+.preview-empty {
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+  text-align: center;
+  padding: 3rem 0;
+}
+
+.md-render { font-size: 0.9375rem; line-height: 1.8; color: var(--ink-secondary); max-width: 72ch; margin: 0 auto; }
+.md-render :deep(p) { margin: 0 0 0.75rem; }
+.md-render :deep(h1),
+.md-render :deep(h2),
+.md-render :deep(h3),
+.md-render :deep(h4) {
+  font-weight: 600;
+  color: var(--ink-primary);
+  margin: 1.25rem 0 0.6rem;
+}
+.md-render :deep(h1) { font-size: 1.25rem; }
+.md-render :deep(h2) { font-size: 1.125rem; }
+.md-render :deep(h3) { font-size: 1rem; }
+.md-render :deep(h1:first-child),
+.md-render :deep(h2:first-child),
+.md-render :deep(h3:first-child) { margin-top: 0; }
+.md-render :deep(ul),
+.md-render :deep(ol) { margin: 0.25rem 0 0.75rem; padding-left: 1.5rem; }
+.md-render :deep(li) { margin-bottom: 0.3rem; }
+.md-render :deep(strong) { font-weight: 600; color: var(--ink-primary); }
+.md-render :deep(code) {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 0.1em 0.35em;
+}
+.md-render :deep(blockquote) {
+  margin: 0.5rem 0;
+  padding-left: 0.875rem;
+  border-left: 3px solid var(--border-strong);
+  color: var(--ink-muted);
+}
+.md-render :deep(hr) { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+.md-render :deep(table) { border-collapse: collapse; margin: 0.5rem 0; }
+.md-render :deep(th),
+.md-render :deep(td) { border: 1px solid var(--border); padding: 0.35rem 0.6rem; font-size: 0.875rem; }
 
 /* Toast */
 .toast-message {
@@ -1025,20 +1108,22 @@ async function executeAiPolish(volume, requirements) {
   bottom: 2rem;
   left: 50%;
   transform: translateX(-50%);
-  background-color: #1f2937;
-  color: #fff;
-  padding: 0.8rem 1.5rem;
-  border-radius: 8px;
-  font-size: 0.9rem;
+  background-color: var(--ink-primary);
+  color: var(--bg);
+  padding: 0.7rem 1.25rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
   font-weight: 500;
-  animation: slideUpFade 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: slideUpFade 0.3s var(--ease-emerge);
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-toast);
 }
 
-.toast-message.error { background-color: #ef4444; }
+.toast-message.error { background-color: var(--danger); color: #fff; }
+[data-theme="dark"] .toast-message.error { color: #10131A; }
 
 .delete-options {
   margin-top: 0.75rem;
@@ -1051,29 +1136,31 @@ async function executeAiPolish(volume, requirements) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.9rem;
-  color: #374151;
+  font-size: 0.875rem;
+  color: var(--ink-primary);
   cursor: pointer;
 }
 
 .delete-option input[type="radio"] {
-  accent-color: #6b5840;
+  accent-color: var(--primary);
 }
 
 .delete-option.danger {
-  color: #991b1b;
+  color: var(--danger);
 }
 
 .delete-note {
   margin: 0.1rem 0 0;
   padding: 0.5rem 0.6rem;
-  border-radius: 8px;
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #7f1d1d;
-  font-size: 0.8rem;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--danger-tint);
+  color: var(--danger-hover);
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
+
+[data-theme="dark"] .delete-note { color: var(--danger); }
 
 @keyframes slideUpFade {
   from { opacity: 0; transform: translate(-50%, 15px); }
@@ -1082,21 +1169,25 @@ async function executeAiPolish(volume, requirements) {
 
 /* Empty State */
 .empty-state {
-  display: flex; 
-  align-items: center; 
-  justify-content: center; 
-  height: 100%; 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
 }
 .theme-empty {
-    background-color: #ffffff;
-    border: 1px dashed #d1d5db;
+    background-color: var(--card);
+    border: 1px dashed var(--border-strong);
     padding: 3rem;
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     text-align: center;
     max-width: 500px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
 }
-.empty-icon { font-size: 4rem; margin-bottom: 1rem; color: #9ca3af; }
-.empty-content h3 { font-size: 1.5rem; margin-bottom: 0.8rem; color: #111827; }
-.empty-content p { color: #6b7280; margin-bottom: 2rem; line-height: 1.6; }
+.empty-icon { margin-bottom: 1rem; color: var(--ink-muted); opacity: 0.7; }
+.empty-content h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+  color: var(--ink-primary);
+}
+.empty-content p { color: var(--ink-secondary); margin-bottom: 1.75rem; line-height: 1.6; font-weight: 400; }
 </style>

@@ -5,6 +5,7 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { projectsApi } from '../api'
 import { useProjectStore } from '../stores/project'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
+import { ChevronDown } from 'lucide-vue-next'
 
 const projectStore = useProjectStore()
 
@@ -18,6 +19,21 @@ const showSaveDialog = ref(false)
 const forceLeave = ref(false)
 const showLeaveDialog = ref(false)
 let pendingLeaveResolve = null
+
+// 折叠状态:默认收起,点头部展开;有未保存改动的卡强制展开
+const expandedIds = ref(new Set())
+
+function toggleExpand(id) {
+  if (isDirty(id)) return
+  const next = new Set(expandedIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedIds.value = next
+}
+
+function isExpanded(id) {
+  return expandedIds.value.has(id) || isDirty(id)
+}
 
 function showMessage(text, duration = 3000) {
   message.value = text
@@ -254,21 +270,30 @@ onBeforeUnmount(() => {
               v-for="item in group.prompts"
               :key="item.id"
               class="prompt-card"
-              :class="{ dirty: isDirty(item.id) }"
+              :class="{ dirty: isDirty(item.id), expanded: isExpanded(item.id) }"
             >
-              <div class="prompt-head">
+              <div
+                class="prompt-head"
+                role="button"
+                :aria-expanded="isExpanded(item.id)"
+                @click="toggleExpand(item.id)"
+              >
                 <div>
                   <h3>{{ item.name }}</h3>
                   <p>{{ item.description }}</p>
                 </div>
-                <div class="prompt-badges">
-                  <span class="badge" :class="item.customized ? 'badge-custom' : 'badge-default'">
-                    {{ item.customized ? '已自定义' : '默认快照' }}
-                  </span>
-                  <span v-if="isDirty(item.id)" class="badge badge-dirty">未保存</span>
+                <div class="prompt-head-right">
+                  <div class="prompt-badges">
+                    <span class="badge" :class="item.customized ? 'badge-custom' : 'badge-default'">
+                      {{ item.customized ? '已自定义' : '默认快照' }}
+                    </span>
+                    <span v-if="isDirty(item.id)" class="badge badge-dirty">未保存</span>
+                  </div>
+                  <ChevronDown :size="15" :stroke-width="1.75" class="expand-chevron" :class="{ open: isExpanded(item.id) }" />
                 </div>
               </div>
 
+              <template v-if="isExpanded(item.id)">
               <div class="slot-meta">
                 <div class="slot-meta-row">
                   <span class="slot-label">文件</span>
@@ -301,6 +326,7 @@ onBeforeUnmount(() => {
                   恢复此模板
                 </button>
               </div>
+              </template>
             </article>
           </div>
         </section>
@@ -321,12 +347,12 @@ onBeforeUnmount(() => {
       <ul style="margin: 0; padding-left: 1.2rem; line-height: 1.8;">
         <li v-for="s in saveDialogSummary" :key="s.id">
           <strong>{{ s.name }}</strong>
-          <span v-if="s.missing.length" style="color: #b45309; font-size: 0.88rem;">
+          <span v-if="s.missing.length" style="color: var(--warning-strong); font-size: 0.88rem;">
             &nbsp;— 缺失变量：{{ s.missing.join('、') }}
           </span>
         </li>
       </ul>
-      <p v-if="hasMissingVarsInDirty" style="margin: 0.75rem 0 0; color: #b45309; font-size: 0.88rem;">
+      <p v-if="hasMissingVarsInDirty" style="margin: 0.75rem 0 0; color: var(--warning-strong); font-size: 0.88rem;">
         部分模板存在缺失变量，运行时对应位置将不会被替换，可能导致输出异常。
       </p>
     </ConfirmDialog>
@@ -350,10 +376,6 @@ onBeforeUnmount(() => {
 .prompt-config-page {
   height: 100%;
   min-height: 0;
-  background:
-    radial-gradient(circle at top left, rgba(198, 118, 53, 0.12), transparent 28%),
-    radial-gradient(circle at 85% 20%, rgba(115, 74, 36, 0.10), transparent 24%),
-    linear-gradient(180deg, #f7f1e7 0%, #f9f7f2 42%, #fcfbf8 100%);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -363,7 +385,7 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   min-height: 100%;
   box-sizing: border-box;
-  padding: 2.25rem 2rem 4rem;
+  padding: 1.5rem 2rem 4rem;
 }
 
 .page-hero {
@@ -371,92 +393,95 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 2rem;
-  margin-bottom: 1.5rem;
-  padding: 1.75rem 1.85rem;
-  border-radius: 24px;
-  background: linear-gradient(135deg, rgba(255, 250, 242, 0.96), rgba(249, 239, 223, 0.92));
-  border: 1px solid rgba(125, 86, 42, 0.14);
-  box-shadow: 0 18px 40px rgba(102, 72, 42, 0.08);
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .hero-kicker {
-  margin: 0 0 0.5rem;
-  font-size: 0.78rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: #9b6b3f;
+  margin: 0 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink-muted);
 }
 
 .page-hero h1 {
   margin: 0;
-  font-size: 2rem;
-  font-weight: 800;
-  color: #2f2417;
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--ink-primary);
+  letter-spacing: -0.01em;
 }
 
 .hero-copy {
   max-width: 720px;
-  margin: 0.8rem 0 0;
-  line-height: 1.75;
-  color: #6f5b46;
+  margin: 0.6rem 0 0;
+  line-height: 1.7;
+  color: var(--ink-secondary);
+  font-size: 0.9375rem;
 }
 
 .hero-meta {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
 }
 
 .meta-pill {
-  padding: 0.7rem 0.95rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(125, 86, 42, 0.12);
-  color: #5c452c;
-  font-weight: 600;
+  padding: 0.5rem 0.8rem;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+  font-weight: 500;
+  font-size: 0.8125rem;
   white-space: nowrap;
 }
 
 .control-bar {
+  position: sticky;
+  top: 0.75rem;
+  z-index: var(--z-sticky);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 1.5rem;
-  padding: 1rem 1.1rem;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.74);
-  border: 1px solid rgba(125, 86, 42, 0.12);
-  backdrop-filter: blur(8px);
+  margin-bottom: 1.25rem;
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .control-copy {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  color: #4f3b27;
+  color: var(--ink-secondary);
+  font-size: 0.875rem;
 }
 
 .control-copy strong {
-  font-size: 1.4rem;
+  font-size: 1.25rem;
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
 }
 
 .control-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.625rem;
 }
 
 .btn {
-  border: none;
-  border-radius: 999px;
-  padding: 0.72rem 1.1rem;
-  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  font-size: 0.875rem;
   cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
-}
-
-.btn:hover:not(:disabled) {
-  transform: translateY(-1px);
+  transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
 }
 
 .btn:disabled {
@@ -465,39 +490,50 @@ onBeforeUnmount(() => {
 }
 
 .btn.solid {
-  color: #fff;
-  background: linear-gradient(135deg, #9f6430, #7d4a21);
-  box-shadow: 0 12px 24px rgba(125, 74, 33, 0.22);
+  color: var(--on-primary);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.btn.solid:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 
 .btn.ghost,
 .btn.tiny {
-  color: #6c5136;
-  background: #fff;
-  border: 1px solid rgba(125, 86, 42, 0.15);
+  color: var(--ink-secondary);
+  background: var(--card);
+  border: 1px solid var(--border);
+}
+
+.btn.ghost:hover:not(:disabled),
+.btn.tiny:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
 }
 
 .btn.tiny {
-  padding: 0.45rem 0.8rem;
-  font-size: 0.82rem;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8125rem;
 }
 
 .loading-card,
 .group-panel {
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.86);
-  border: 1px solid rgba(125, 86, 42, 0.1);
-  box-shadow: 0 12px 28px rgba(79, 52, 21, 0.06);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  border: 1px solid var(--border);
 }
 
 .loading-card {
   padding: 2rem;
-  color: #6b5b4c;
+  color: var(--ink-muted);
 }
 
 .group-panel {
-  margin-bottom: 1.4rem;
-  padding: 1.35rem;
+  margin-bottom: 1rem;
+  padding: 1.25rem;
 }
 
 .group-head {
@@ -506,34 +542,43 @@ onBeforeUnmount(() => {
 
 .group-head h2 {
   margin: 0;
-  font-size: 1.12rem;
-  color: #342618;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--ink-primary);
 }
 
 .group-head p {
   margin: 0.4rem 0 0;
-  color: #77614b;
+  color: var(--ink-secondary);
+  font-size: 0.875rem;
 }
 
 .prompt-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
+  gap: 0.875rem;
 }
 
 .prompt-card {
   display: flex;
   flex-direction: column;
-  min-height: 520px;
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   padding: 1rem;
-  background: linear-gradient(180deg, rgba(255, 251, 246, 0.94), rgba(255, 255, 255, 0.96));
-  border: 1px solid rgba(125, 86, 42, 0.1);
+  background: var(--surface);
+  border: 1px solid transparent;
+  transition: border-color var(--dur-fast) var(--ease-standard);
+}
+
+.prompt-card.expanded {
+  min-height: 520px;
+}
+
+.prompt-card:not(.expanded):hover {
+  border-color: var(--border-strong);
 }
 
 .prompt-card.dirty {
-  border-color: rgba(175, 104, 35, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(175, 104, 35, 0.16);
+  border-color: var(--warning);
 }
 
 .prompt-head {
@@ -541,76 +586,111 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 0.9rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.prompt-card.expanded .prompt-head {
+  margin-bottom: 0.875rem;
+}
+
+.prompt-card.dirty .prompt-head {
+  cursor: default;
+}
+
+.prompt-head-right {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  flex-shrink: 0;
+}
+
+.expand-chevron {
+  color: var(--ink-muted);
+  margin-top: 0.2rem;
+  transition: transform var(--dur-fast) var(--ease-standard);
+  flex-shrink: 0;
+}
+
+.expand-chevron.open {
+  transform: rotate(180deg);
+}
+
+.prompt-card.dirty .expand-chevron {
+  opacity: 0.35;
 }
 
 .prompt-head h3 {
   margin: 0;
-  font-size: 1rem;
-  color: #2d2317;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--ink-primary);
 }
 
 .prompt-head p {
   margin: 0.35rem 0 0;
-  font-size: 0.9rem;
+  font-size: 0.8125rem;
   line-height: 1.6;
-  color: #7c6650;
+  color: var(--ink-secondary);
 }
 
 .prompt-badges {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.4rem;
 }
 
 .badge {
-  padding: 0.28rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.74rem;
-  font-weight: 700;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 500;
   text-align: center;
 }
 
 .badge-default {
-  color: #5d503c;
-  background: #f2e8d9;
+  color: var(--ink-secondary);
+  background: var(--card);
+  border: 1px solid var(--border);
 }
 
 .badge-custom {
-  color: #185a55;
-  background: #dbf5f1;
+  color: var(--success);
+  background: var(--success-tint);
 }
 
 .badge-dirty {
-  color: #8a4d15;
-  background: #ffe7cc;
+  color: var(--warning-strong);
+  background: var(--warning-tint);
 }
 
 .slot-meta {
   display: grid;
   gap: 0.5rem;
-  margin-bottom: 0.9rem;
+  margin-bottom: 0.875rem;
 }
 
 .slot-meta-row {
   display: flex;
   align-items: flex-start;
   gap: 0.7rem;
-  font-size: 0.84rem;
-  color: #6f5943;
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
 }
 
 .slot-label {
   min-width: 2.4rem;
-  color: #a08368;
+  color: var(--ink-muted);
 }
 
 .slot-meta code {
   word-break: break-all;
-  color: #5f4527;
-  background: rgba(124, 90, 52, 0.08);
+  color: var(--ink-primary);
+  background: var(--hover);
   padding: 0.15rem 0.35rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
 }
 
 .chip-row {
@@ -621,25 +701,29 @@ onBeforeUnmount(() => {
 
 .chip {
   padding: 0.2rem 0.45rem;
-  border-radius: 999px;
-  background: #f6efe5;
-  color: #7a5f43;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
 }
 
 .chip-missing {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-tint);
+  border-color: transparent;
+  color: var(--warning-strong);
   text-decoration: line-through;
 }
 
 .var-warning {
   margin-top: 0.35rem;
   padding: 0.45rem 0.65rem;
-  border-radius: 10px;
-  background: #fffbeb;
-  border: 1px solid #fcd34d;
-  color: #92400e;
-  font-size: 0.82rem;
+  border-radius: var(--radius-md);
+  background: var(--warning-tint);
+  border: 1px solid transparent;
+  color: var(--warning-strong);
+  font-size: 0.8125rem;
   line-height: 1.5;
 }
 
@@ -648,20 +732,21 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 300px;
   resize: vertical;
-  border: 1px solid rgba(125, 86, 42, 0.12);
-  border-radius: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   padding: 1rem;
-  background: #fffdf9;
-  color: #382919;
+  background: var(--card);
+  color: var(--ink-primary);
   line-height: 1.7;
-  font-size: 0.93rem;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.875rem;
+  font-family: var(--font-mono);
   outline: none;
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
 }
 
 .prompt-editor:focus {
-  border-color: rgba(159, 100, 48, 0.45);
-  box-shadow: 0 0 0 4px rgba(159, 100, 48, 0.09);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-tint);
 }
 
 .prompt-foot {
@@ -673,19 +758,23 @@ onBeforeUnmount(() => {
 }
 
 .char-count {
-  color: #8c7359;
-  font-size: 0.82rem;
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
 }
 
 .toast-message {
   position: fixed;
   right: 1.5rem;
   bottom: 1.5rem;
-  padding: 0.85rem 1.05rem;
-  border-radius: 14px;
-  background: rgba(48, 34, 19, 0.94);
-  color: #fff;
-  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.22);
+  padding: 0.75rem 1.1rem;
+  border-radius: var(--radius-md);
+  background: var(--ink-primary);
+  color: var(--bg);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-toast);
+  font-size: 0.875rem;
 }
 
 @media (max-width: 980px) {

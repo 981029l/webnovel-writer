@@ -128,36 +128,32 @@ watch(() => aiTask.result, (result) => {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: 9999;
+  z-index: var(--z-toast);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
   width: min(420px, calc(100vw - 24px));
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   font-size: 14px;
   font-weight: 500;
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  backdrop-filter: blur(16px) saturate(1.15);
-}
-
-.task-popup.running {
-  background: rgba(255, 255, 255, 0.82);
-  color: var(--text-primary, #2c2825);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--ink-primary);
 }
 
 .task-popup.success {
-  background: rgba(236, 253, 245, 0.82);
-  color: #065f46;
-  border-color: rgba(16, 185, 129, 0.22);
+  background: var(--success-tint);
+  color: var(--success);
+  border-color: transparent;
 }
 
 .task-popup.error {
-  background: rgba(254, 242, 242, 0.84);
-  color: #991b1b;
-  border-color: rgba(239, 68, 68, 0.22);
+  background: var(--danger-tint);
+  color: var(--danger);
+  border-color: transparent;
 }
 
 .status-content {
@@ -196,6 +192,8 @@ watch(() => aiTask.result, (result) => {
   opacity: 0.72;
   font-size: 12px;
   margin-top: 2px;
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
 }
 
 .status-copy {
@@ -216,34 +214,34 @@ watch(() => aiTask.result, (result) => {
   gap: 0.45rem;
   font-size: 12px;
   line-height: 1.35;
-  color: rgba(51, 65, 85, 0.78);
+  color: var(--ink-secondary);
 }
 
 .status-step .step-dot {
   width: 7px;
   height: 7px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.5);
+  border-radius: 50%;
+  background: var(--border-strong);
   flex-shrink: 0;
 }
 
 .status-step.active .step-dot {
-  background: #f59e0b;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.16);
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-tint);
 }
 
 .status-step.active .step-name {
-  color: #1f2937;
-  font-weight: 700;
+  color: var(--ink-primary);
+  font-weight: 600;
 }
 
 .status-step.completed .step-dot {
-  background: #10b981;
+  background: var(--success);
 }
 
 .status-step.failed .step-dot,
 .status-step.error .step-dot {
-  background: #ef4444;
+  background: var(--danger);
 }
 
 .step-name {
@@ -255,30 +253,33 @@ watch(() => aiTask.result, (result) => {
 .step-state {
   flex-shrink: 0;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  background: rgba(148, 163, 184, 0.16);
-  color: rgba(71, 85, 105, 0.9);
+  font-weight: 600;
+  background: var(--surface);
+  color: var(--ink-muted);
+  border: 1px solid var(--border);
 }
 
 .step-state.active,
 .step-state.processing {
-  background: rgba(245, 158, 11, 0.16);
-  color: #b45309;
+  background: var(--warning-tint);
+  color: var(--warning-strong);
+  border-color: transparent;
 }
 
 .step-state.completed,
 .step-state.success {
-  background: rgba(16, 185, 129, 0.14);
-  color: #047857;
+  background: var(--success-tint);
+  color: var(--success);
+  border-color: transparent;
 }
 
 .step-state.failed,
 .step-state.error {
-  background: rgba(239, 68, 68, 0.14);
-  color: #b91c1c;
+  background: var(--danger-tint);
+  color: var(--danger);
+  border-color: transparent;
 }
 
 .status-actions {
@@ -289,21 +290,21 @@ watch(() => aiTask.result, (result) => {
 }
 
 .btn-view, .btn-close {
-  background: rgba(0,0,0,0.05);
-  border: none;
-  color: #64748b;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink-secondary);
   padding: 4px 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 13px;
-  transition: all 0.2s;
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
   display: flex;
   align-items: center;
 }
 
 .btn-view:hover, .btn-close:hover {
-  background: rgba(0,0,0,0.1);
-  color: #0f172a;
+  background: var(--hover);
+  color: var(--ink-primary);
 }
 
 .btn-close {

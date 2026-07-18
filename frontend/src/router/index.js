@@ -11,6 +11,13 @@ const routes = [
         component: () => import('../views/HomeView.vue')
     },
 
+    // AI 共创金手指（独立页面）
+    {
+        path: '/create',
+        name: 'cocreate',
+        component: () => import('../views/CoCreateView.vue')
+    },
+
     // Layer 2: Workspace (with sidebar via WorkspaceLayout)
     {
         path: '/workspace',

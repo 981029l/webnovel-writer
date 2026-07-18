@@ -1,79 +1,42 @@
 <!-- Copyright (c) 2026 左岚. All rights reserved. -->
-<!-- WorkspaceLayout.vue - 工作台布局（侧边栏包装器） -->
+<!-- WorkspaceLayout.vue - 工作台布局(顶部导航 + 白纸内容区) -->
 <script setup>
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useProjectStore } from '../stores/project'
-import { onMounted } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { useTheme } from '../composables/useTheme'
+import {
+  Sun, Moon, ChevronLeft, ChevronDown, NotebookPen, Settings,
+  LayoutDashboard, ListTree, PenLine, Users, Boxes, Share2, Search,
+  FolderCog, SlidersHorizontal, UploadCloud
+} from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
+const { theme, toggle: toggleTheme } = useTheme()
 
-onMounted(() => {
-  // Only fetch if store doesn't already have data (e.g., page refresh)
-  // Avoids racing with child view's own fetchStatus()
-  if (projectStore.projectRoot && !projectStore.title) {
-    projectStore.fetchStatus()
-  }
-})
-
-const navItems = [
-  {
-    path: '/workspace/dashboard',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>',
-    label: '仪表盘'
-  },
-  {
-    path: '/workspace/project',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z" /></svg>',
-    label: '项目管理'
-  },
-  {
-    path: '/workspace/prompts',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 3.75v16.5m-9-12.75h9m-9 4.5h9m-9 4.5h4.5M6 3.75h12A2.25 2.25 0 0 1 20.25 6v12A2.25 2.25 0 0 1 18 20.25H6A2.25 2.25 0 0 1 3.75 18V6A2.25 2.25 0 0 1 6 3.75Z" /></svg>',
-    label: '提示词配置'
-  },
-  {
-    path: '/workspace/outline',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" /></svg>',
-    label: '大纲编辑'
-  },
-  {
-    path: '/workspace/write',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" /></svg>',
-    label: '章节创作'
-  },
-  // {
-  //   path: '/workspace/entities',
-  //   icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="m21 7.5-9-5.25L3 7.5m18 0-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg>',
-  //   label: '实体管理'
-  // },
-  {
-    path: '/workspace/rag',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg>',
-    label: 'RAG 检索'
-  },
-  {
-    path: '/workspace/characters',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" /></svg>',
-    label: '角色管理'
-  },
-  {
-    path: '/workspace/relations',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935 2.186 2.25 2.25 0 0 0-3.935-2.186Zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" /></svg>',
-    label: '关系图谱'
-  },
-  {
-    path: '/workspace/fanqie',
-    icon: '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-6"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" /></svg>',
-    label: '番茄上传'
-  }
+const mainNav = [
+  { path: '/workspace/dashboard', icon: LayoutDashboard, label: '仪表盘' },
+  { path: '/workspace/outline', icon: ListTree, label: '大纲编辑' },
+  { path: '/workspace/write', icon: PenLine, label: '章节创作' },
+  { path: '/workspace/characters', icon: Users, label: '角色管理' },
+  { path: '/workspace/entities', icon: Boxes, label: '设定集' },
+  { path: '/workspace/relations', icon: Share2, label: '关系图谱' },
+  { path: '/workspace/rag', icon: Search, label: 'RAG 检索' }
 ]
 
-function goBackToProjects() {
-  projectStore.clearProject()
-  router.push('/')
-}
+const settingsNav = [
+  { path: '/workspace/project', icon: FolderCog, label: '项目管理' },
+  { path: '/workspace/prompts', icon: SlidersHorizontal, label: '提示词配置' },
+  { path: '/workspace/fanqie', icon: UploadCloud, label: '番茄上传' }
+]
+
+// 设置下拉
+const showSettingsMenu = ref(false)
+const settingsRef = ref(null)
+
+const settingsActive = computed(() => settingsNav.some(item => route.path.startsWith(item.path)))
 
 function isActiveRoute(itemPath) {
   if (itemPath === '/workspace/dashboard') {
@@ -81,66 +44,113 @@ function isActiveRoute(itemPath) {
   }
   return route.path.startsWith(itemPath)
 }
+
+function goBackToProjects() {
+  projectStore.clearProject()
+  router.push('/')
+}
+
+function goSetting(path) {
+  showSettingsMenu.value = false
+  router.push(path)
+}
+
+function onDocMousedown(e) {
+  if (showSettingsMenu.value && settingsRef.value && !settingsRef.value.contains(e.target)) {
+    showSettingsMenu.value = false
+  }
+}
+
+function onKeydown(e) {
+  if (e.key === 'Escape') showSettingsMenu.value = false
+}
+
+onMounted(() => {
+  if (projectStore.projectRoot && !projectStore.title) {
+    projectStore.fetchStatus()
+  }
+  document.addEventListener('mousedown', onDocMousedown)
+  window.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('mousedown', onDocMousedown)
+  window.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
   <div class="workspace-layout">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <!-- Back to project list -->
-        <button class="back-btn" @click="goBackToProjects">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-          </svg>
-          <span>返回项目列表</span>
+    <!-- 顶部导航栏 -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="tb-back" @click="goBackToProjects" title="返回项目列表" aria-label="返回项目列表">
+          <ChevronLeft :size="16" :stroke-width="1.75" />
         </button>
+        <span class="tb-brand">
+          <NotebookPen :size="14" :stroke-width="2" />
+        </span>
+        <span class="tb-project" :title="projectStore.title || '未命名项目'">{{ projectStore.title || '未命名项目' }}</span>
       </div>
 
-      <!-- Current project name -->
-      <div class="project-name-wrapper">
-        <div class="project-name-display">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
-          </svg>
-          <span class="project-title">{{ projectStore.title || '未命名项目' }}</span>
-        </div>
-      </div>
-
-      <!-- Navigation -->
-      <nav class="sidebar-nav">
+      <nav class="tb-nav" aria-label="工作区导航">
         <RouterLink
-          v-for="item in navItems"
+          v-for="item in mainNav"
           :key="item.path"
           :to="item.path"
-          class="nav-item"
+          class="tb-item"
           :class="{ active: isActiveRoute(item.path) }"
         >
-          <span class="nav-icon" v-html="item.icon"></span>
-          <span class="nav-label">{{ item.label }}</span>
-          <div v-if="isActiveRoute(item.path)" class="active-indicator"></div>
+          <component :is="item.icon" :size="15" :stroke-width="1.75" />
+          <span class="tb-item-label">{{ item.label }}</span>
         </RouterLink>
       </nav>
 
-      <!-- Footer -->
-      <div class="sidebar-footer">
-        <div v-if="projectStore.initialized" class="project-info">
-          <div class="project-genre">{{ projectStore.genre || '未设置题材' }}</div>
-          <div class="project-stats">
-            <span>{{ projectStore.totalChapters }} 章</span>
-            <span class="separator">·</span>
-            <span>{{ (projectStore.totalWords / 10000).toFixed(1) }} 万字</span>
-          </div>
+      <div class="topbar-right">
+        <div class="tb-settings" ref="settingsRef">
+          <button
+            class="tb-item tb-settings-btn"
+            :class="{ active: settingsActive || showSettingsMenu }"
+            @click="showSettingsMenu = !showSettingsMenu"
+            aria-haspopup="menu"
+            :aria-expanded="showSettingsMenu"
+          >
+            <Settings :size="15" :stroke-width="1.75" />
+            <span class="tb-item-label">设置</span>
+            <ChevronDown :size="13" :stroke-width="1.75" class="tb-chev" :class="{ open: showSettingsMenu }" />
+          </button>
+          <Transition name="menu-pop">
+            <div v-if="showSettingsMenu" class="tb-menu" role="menu">
+              <button
+                v-for="item in settingsNav"
+                :key="item.path"
+                class="tb-menu-item"
+                :class="{ active: isActiveRoute(item.path) }"
+                role="menuitem"
+                @click="goSetting(item.path)"
+              >
+                <component :is="item.icon" :size="15" :stroke-width="1.75" />
+                {{ item.label }}
+              </button>
+            </div>
+          </Transition>
         </div>
-        <div v-else class="project-empty">
-          项目未初始化
-        </div>
-      </div>
-    </aside>
 
-    <!-- Main Content -->
+        <button
+          class="tb-icon-btn"
+          @click="toggleTheme"
+          :title="theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'"
+          :aria-label="theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'"
+        >
+          <Sun v-if="theme === 'dark'" :size="16" :stroke-width="1.75" />
+          <Moon v-else :size="16" :stroke-width="1.75" />
+        </button>
+      </div>
+    </header>
+
+    <!-- 内容区:灰画布上的白纸 -->
     <main class="main-content">
-      <div class="content-container">
+      <div class="content-sheet">
         <RouterView />
       </div>
     </main>
@@ -150,178 +160,245 @@ function isActiveRoute(itemPath) {
 <style scoped>
 .workspace-layout {
   display: flex;
+  flex-direction: column;
   height: 100%;
   width: 100%;
-  background-color: var(--bg-background);
-  color: var(--text-primary);
+  background-color: var(--bg);
+  color: var(--ink-primary);
 }
 
-/* Sidebar Styling */
-.sidebar {
-  width: var(--sidebar-width);
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--sidebar-bg);
-  border-right: 1px solid var(--sidebar-border);
-  transition: all 0.3s ease;
-  z-index: 10;
-}
-
-.sidebar-header {
-  padding: 1rem 1rem 0.75rem;
-}
-
-.back-btn {
+/* ─── 顶栏 ─── */
+.topbar {
+  height: 52px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  width: 100%;
-  padding: 0.625rem 0.75rem;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
+  padding: 0 0.875rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  z-index: var(--z-sticky);
 }
 
-.back-btn:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--border-hover);
-  color: var(--primary);
-}
-
-.back-btn svg {
-  flex-shrink: 0;
-}
-
-/* Project Name */
-.project-name-wrapper {
-  padding: 0.5rem 1rem 1rem;
-}
-
-.project-name-display {
+.topbar-left {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(129, 140, 248, 0.05));
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(99, 102, 241, 0.12);
-}
-
-.project-name-display svg {
-  color: var(--primary);
+  gap: 0.55rem;
   flex-shrink: 0;
+  min-width: 0;
 }
 
-.project-title {
-  font-weight: 600;
-  font-size: 0.875rem;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Navigation */
-.sidebar-nav {
-  flex: 1;
-  padding: 0.5rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  overflow-y: auto;
-}
-
-.nav-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  text-decoration: none;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-
-.nav-item:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.nav-item.active {
-  background-color: var(--bg-hover);
-  color: var(--primary);
-  font-weight: 600;
-}
-
-.nav-icon {
-  font-size: 1.25rem;
+.tb-back {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
 }
 
-.active-indicator {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 1.5rem;
-  background-color: var(--primary);
-  border-radius: 0 4px 4px 0;
+.tb-back:hover {
+  color: var(--ink-primary);
+  border-color: var(--border-strong);
+  background: var(--hover);
 }
 
-/* Footer */
-.sidebar-footer {
-  padding: 1.5rem;
-  border-top: 1px solid var(--border);
-  background-color: var(--bg-secondary);
-}
-
-.project-info {
+.tb-brand {
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: var(--primary);
+  color: var(--on-primary);
+  border-radius: var(--radius-md);
 }
 
-.project-genre {
+.tb-project {
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--ink-primary);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.project-stats {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+/* ─── 主导航 ─── */
+.tb-nav {
   display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  margin-left: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tb-nav::-webkit-scrollbar { display: none; }
+
+.tb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.375rem 0.65rem;
+  border-radius: var(--radius-md);
+  color: var(--ink-secondary);
+  text-decoration: none;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  white-space: nowrap;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+  flex-shrink: 0;
+}
+
+.tb-item:hover {
+  background: var(--hover);
+  color: var(--ink-primary);
+}
+
+.tb-item.active {
+  background: var(--primary-tint);
+  color: var(--primary-on-tint);
+}
+
+/* ─── 右侧:设置下拉 + 主题 ─── */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex-shrink: 0;
+}
+
+.tb-settings { position: relative; }
+
+.tb-settings-btn {
+  font-family: var(--font-ui);
+}
+
+.tb-chev {
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.tb-chev.open { transform: rotate(180deg); }
+
+.tb-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 156px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: var(--z-dropdown);
+}
+
+.tb-menu-item {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.625rem;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+  white-space: nowrap;
 }
 
-.project-empty {
-  font-size: 0.875rem;
-  color: var(--text-muted);
-  font-style: italic;
+.tb-menu-item:hover {
+  background: var(--hover);
+  color: var(--ink-primary);
 }
 
-/* Main Content */
+.tb-menu-item.active {
+  background: var(--primary-tint);
+  color: var(--primary-on-tint);
+}
+
+.menu-pop-enter-active {
+  transition: opacity var(--dur-fast) var(--ease-emerge), transform var(--dur-fast) var(--ease-emerge);
+}
+.menu-pop-leave-active {
+  transition: opacity 0.1s ease-in;
+}
+.menu-pop-enter-from {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.menu-pop-leave-to {
+  opacity: 0;
+}
+
+.tb-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+}
+
+.tb-icon-btn:hover {
+  color: var(--ink-primary);
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+
+/* ─── 内容区:白纸 Content Sheet ─── */
 .main-content {
   flex: 1;
-  background-color: var(--bg-background);
+  min-height: 0;
+  padding: var(--sheet-gap);
   overflow: hidden;
   position: relative;
 }
 
-.content-container {
+.content-sheet {
   width: 100%;
   height: 100%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* ─── 响应式 ─── */
+@media (max-width: 960px) {
+  .tb-project { display: none; }
+  .topbar { padding: 0 0.625rem; }
+  .tb-nav { margin-left: 0.25rem; padding-left: 0.5rem; }
+}
+
+@media (max-width: 680px) {
+  .tb-item-label { display: none; }
+  .tb-item { padding: 0.375rem 0.5rem; }
 }
 </style>

@@ -1,6 +1,7 @@
 <!-- Copyright (c) 2026 左岚. All rights reserved. -->
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { Check } from 'lucide-vue-next'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -140,7 +141,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
             <span v-if="searchQuery && isOpen" v-html="option.toString().replace(new RegExp(searchQuery, 'gi'), match => `<span class='highlight'>${match}</span>`)"></span>
             <span v-else>{{ option }}</span>
             
-            <span v-if="option === modelValue" class="check-icon">✓</span>
+            <span v-if="option === modelValue" class="check-icon"><Check :size="15" :stroke-width="2" /></span>
           </div>
         </div>
       </transition>
@@ -168,7 +169,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 .select-wrapper.is-open .input-container,
 .input-container:focus-within {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(139, 115, 85, 0.1); /* Softer ring */
+  box-shadow: 0 0 0 3px var(--primary-tint);
 }
 
 /* Inner input - Force no border/outline to prevent double-border issues */
@@ -237,7 +238,7 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.05); /* Shadow LG local definition */
+  box-shadow: var(--shadow-lg);
   max-height: 260px;
   overflow-y: auto;
   z-index: 1000;
@@ -265,12 +266,12 @@ onUnmounted(() => document.removeEventListener('click', handleClickOutside))
 
 .option-item:hover,
 .option-item.is-active {
-  background-color: #f3f4f6;
+  background-color: var(--hover);
   color: var(--text-primary);
 }
 
 .option-item.is-selected {
-  background-color: #f0ebe3; /* lighter primary */
+  background-color: var(--primary-tint);
   color: var(--primary);
   font-weight: 600;
 }

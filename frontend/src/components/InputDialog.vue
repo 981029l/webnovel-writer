@@ -118,7 +118,7 @@ function onCancel() {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: rgb(15 17 21 / 0.45);
   backdrop-filter: blur(4px);
   z-index: 101; /* Higher than confirm dialog */
   display: flex;
@@ -174,7 +174,7 @@ function onCancel() {
 
 .input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 0 2px var(--primary-tint);
   outline: none;
 }
 

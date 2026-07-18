@@ -106,6 +106,21 @@ async function copyTitle() {
 }
 const reviewResult = ref(null)
 const showSidebar = ref(true)
+
+// 工具栏「更多」菜单
+const showMoreMenu = ref(false)
+const moreMenuRef = ref(null)
+function toggleMoreMenu() { showMoreMenu.value = !showMoreMenu.value }
+function runMenu(fn) { showMoreMenu.value = false; fn() }
+function handleDocMousedown(e) {
+  if (showMoreMenu.value && moreMenuRef.value && !moreMenuRef.value.contains(e.target)) {
+    showMoreMenu.value = false
+  }
+}
+
+// 半屏窗口(≤960px)下章节目录自动收起
+const narrowMq = window.matchMedia('(max-width: 960px)')
+function handleNarrowChange(e) { showSidebar.value = !e.matches }
 const MAX_AUTO_TARGETED_FIX_ROUNDS = 3
 const MAX_AUTO_POLISH_ROUNDS = 3
 const MAX_AUTO_REGENERATE_ROUNDS = 3
@@ -196,6 +211,9 @@ onMounted(async () => {
     autoNavigateToFirstUnwritten()
   }
   window.addEventListener('keydown', handleKeydown)
+  document.addEventListener('mousedown', handleDocMousedown)
+  if (narrowMq.matches) showSidebar.value = false
+  narrowMq.addEventListener('change', handleNarrowChange)
 })
 
 // 自动跳转到第一个未完成章节
@@ -221,12 +239,17 @@ function autoNavigateToFirstUnwritten() {
 }
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  document.removeEventListener('mousedown', handleDocMousedown)
+  narrowMq.removeEventListener('change', handleNarrowChange)
 })
 
 function handleKeydown(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') {
     e.preventDefault()
     saveOnly()
+  }
+  if (e.key === 'Escape') {
+    showMoreMenu.value = false
   }
 }
 
@@ -298,7 +321,7 @@ async function loadChapter(id) {
     currentChapter.value = { id, title: outlineTitle || `第${id}章`, content: '', word_count: 0 }
     editContent.value = ''
     editTitle.value = outlineTitle || `第${id}章`
-    message.value = '📝 新章节，开始创作吧！'
+    message.value = '新章节，开始创作吧！'
     setTimeout(() => { if (message.value.includes('新章节')) message.value = '' }, 3000)
   }
 
@@ -637,6 +660,7 @@ async function streamWritePass({
   let buffer = ''
   let streamCompleted = false
   let latestReviewData = null
+  let agentStepSeq = 0
 
   const processSseParts = async (parts) => {
     for (const part of parts) {
@@ -669,6 +693,16 @@ async function streamWritePass({
           fullContent += (data.chunk || '')
         }
         editContent.value = fullContent
+      } else if (data.type === 'agent_step') {
+        // 写手 Agent 写前调研过程（查设定/查伏笔/回看前文）
+        const label = data.detail ? `${data.action}：${data.detail}` : data.action
+        const stepId = `agent-${agentStepSeq++}`
+        aiTaskStore.updateStep({
+          step: stepId,
+          name: `${label}`,
+          status: 'completed'
+        })
+        message.value = `写手调研 · ${label}`
       } else if (data.type === 'error') {
         if (data.level === 'warning') {
           message.value = `⚠️ ${data.message || '后台步骤告警'}`
@@ -1380,15 +1414,6 @@ const reviewText = computed({
               <div class="title-field">
                 <span class="title-header">
                   <span class="title-label">章节标题</span>
-                  <button
-                    class="btn btn-secondary btn-sm"
-                    type="button"
-                    @click="copyTitle"
-                    :disabled="!editTitle?.trim()"
-                    title="复制标题"
-                  >
-                    {{ copyingTitle ? '复制中' : '复制标题' }}
-                  </button>
                 </span>
                 <input
                   v-model="editTitle"
@@ -1399,33 +1424,8 @@ const reviewText = computed({
             </div>
             <span class="word-count-badge">{{ wordCount.toLocaleString() }} 字</span>
           </div>
-          <!-- 第二行：操作按钮分组 -->
+          <!-- 第二行：高频操作可见，低频操作收进「更多」菜单 -->
           <div class="toolbar-row toolbar-actions">
-            <div class="toolbar-group">
-              <button class="btn img-btn-ghost" @click="confirmDelete" title="删除当前章节">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
-              </button>
-            </div>
-            <div class="toolbar-divider"></div>
-            <div class="toolbar-group">
-              <button class="btn btn-secondary btn-sm" @click="copyContent" :disabled="!editContent" title="复制文章">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" /></svg>
-                {{ copying ? '复制中' : '复制文章' }}
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="aiReviewChapter" :disabled="aiReviewing || aiWriting || aiPolishing || aiRevising">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
-                {{ aiReviewing ? '审查中' : '审查' }}
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="aiReviseByReview" :disabled="aiRevising || aiReviewing || aiWriting || aiPolishing || !reviewResult" title="仅按审查意见定点修订，并自动继续审查">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487 19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10m6.862-1.513a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" /></svg>
-                {{ aiRevising ? '修订中' : '按审查修订' }}
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="openPolishConfirm" :disabled="aiPolishing || aiReviewing || aiWriting || aiRevising || !reviewResult" title="先审查，再润色">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" /></svg>
-                {{ aiPolishing ? '润色中' : '润色' }}
-              </button>
-            </div>
-            <div class="toolbar-divider"></div>
             <div class="toolbar-group">
               <button class="btn btn-ai btn-sm" @click="aiWriteChapter" :disabled="aiWriting || aiReviewing || aiPolishing || aiRevising || autoBatchRunning">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" /></svg>
@@ -1440,20 +1440,34 @@ const reviewText = computed({
             </div>
             <div class="toolbar-divider"></div>
             <div class="toolbar-group">
-              <button class="btn btn-secondary btn-sm" @click="handleExtractPreview" :disabled="settingSyncStore.isRunning || !editContent?.trim()" title="自动后台同步设定数据">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" /></svg>
-                {{ settingSyncStore.isRunning ? '同步中...' : '设定同步' }}
+              <button class="btn btn-secondary btn-sm" @click="aiReviewChapter" :disabled="aiReviewing || aiWriting || aiPolishing || aiRevising">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" /></svg>
+                {{ aiReviewing ? '审查中' : '审查' }}
               </button>
             </div>
-            <div class="toolbar-divider"></div>
             <div class="toolbar-group toolbar-group-end">
               <button class="btn btn-secondary btn-sm" @click="saveOnly" :disabled="saving || aiWriting || aiReviewing || aiPolishing || aiRevising" title="保存 (Ctrl+S)">
-                <svg v-if="!(saving && saveType === 'only')" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4 mr-1"><path stroke-linecap="round" stroke-linejoin="round" d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5m8.25 3.25a3 3 0 0 0-3 3 .75.75 0 0 1-1.5 0 4.5 4.5 0 0 1 8 0 3 3 0 0 0 3-3 .75.75 0 0 1 1.5 0 4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1-.9.636l.9.636" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 7.5c0-1.657-1.343-3-3-3h-9c-1.657 0-3 1.343-3 3" /></svg>
                 {{ (saving && saveType === 'only') ? '保存中' : '保存' }}
               </button>
               <button class="btn btn-primary btn-sm" @click="saveAndNext" :disabled="saving || aiWriting || aiReviewing || aiPolishing || aiRevising">
                 {{ (saving && saveType === 'next') ? '保存中...' : '下一章' }}
               </button>
+              <div class="more-wrap" ref="moreMenuRef">
+                <button class="btn btn-secondary btn-sm more-btn" @click="toggleMoreMenu" :aria-expanded="showMoreMenu" aria-haspopup="menu" title="更多操作">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-4"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z" /></svg>
+                </button>
+                <Transition name="menu-pop">
+                  <div v-if="showMoreMenu" class="more-menu" role="menu">
+                    <button class="menu-item" role="menuitem" :disabled="aiPolishing || aiReviewing || aiWriting || aiRevising || !reviewResult" @click="runMenu(openPolishConfirm)" title="先审查，再润色">{{ aiPolishing ? '润色中…' : '润色' }}</button>
+                    <button class="menu-item" role="menuitem" :disabled="aiRevising || aiReviewing || aiWriting || aiPolishing || !reviewResult" @click="runMenu(aiReviseByReview)" title="仅按审查意见定点修订，并自动继续审查">{{ aiRevising ? '修订中…' : '按审查修订' }}</button>
+                    <button class="menu-item" role="menuitem" :disabled="settingSyncStore.isRunning || !editContent?.trim()" @click="runMenu(handleExtractPreview)" title="自动后台同步设定数据">{{ settingSyncStore.isRunning ? '同步中…' : '设定同步' }}</button>
+                    <button class="menu-item" role="menuitem" :disabled="!editContent" @click="runMenu(copyContent)">{{ copying ? '复制中…' : '复制正文' }}</button>
+                    <button class="menu-item" role="menuitem" :disabled="!editTitle?.trim()" @click="runMenu(copyTitle)">{{ copyingTitle ? '复制中…' : '复制标题' }}</button>
+                    <div class="menu-divider" role="separator"></div>
+                    <button class="menu-item danger" role="menuitem" @click="runMenu(confirmDelete)">删除章节</button>
+                  </div>
+                </Transition>
+              </div>
             </div>
           </div>
         </header>
@@ -1482,7 +1496,7 @@ const reviewText = computed({
         <!-- 收尾规划弹窗 -->
         <div v-if="showEndingDialog" class="modal-overlay">
           <div class="modal-content ending-modal">
-            <h3 class="modal-title">🏆 智能收尾规划</h3>
+            <h3 class="modal-title">智能收尾规划</h3>
             
             <div v-if="!endingPlan" class="config-section">
               <p class="ending-desc">AI 将根据当前剧情和大纲，为您规划一个精彩的完结路线。</p>
@@ -1528,7 +1542,7 @@ const reviewText = computed({
       <Transition name="review-slide">
         <div v-if="reviewResult" class="review-panel">
           <div class="review-header">
-            <span class="review-title">📋 审查结果</span>
+            <span class="review-title">审查结果</span>
             <button class="close-review" @click="reviewResult = null">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
             </button>
@@ -1568,18 +1582,18 @@ const reviewText = computed({
     <div v-if="showAutoBatchDialog" class="modal-overlay" @click.self="showAutoBatchDialog = false">
       <div class="modal-content" style="max-width: 380px;">
         <h3 class="modal-title">自动连写</h3>
-        <p style="color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.9rem;">
+        <p class="batch-desc">
           从当前章节开始，自动完成「生成 → 审查 → 修订 → 保存 → 设定同步 → 下一章」的完整流程。
         </p>
         <div class="form-group" style="margin-bottom: 1.2rem;">
-          <label style="font-size: 0.85rem; color: var(--text-secondary);">连续创作章数</label>
+          <label>连续创作章数</label>
           <div class="range-wrapper">
             <input type="range" v-model.number="autoBatchTotal" min="1" max="50" step="1" />
-            <input type="number" v-model.number="autoBatchTotal" min="1" max="50" step="1" style="width: 52px; text-align: center; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-secondary, #1a1a2e); color: var(--text-primary);" />
-            <span style="font-size: 0.85rem; color: var(--text-secondary);">章</span>
+            <input type="number" v-model.number="autoBatchTotal" min="1" max="50" step="1" class="batch-num-input" />
+            <span class="batch-unit">章</span>
           </div>
         </div>
-        <p style="color: var(--text-tertiary, #888); font-size: 0.8rem; margin-bottom: 1rem;">
+        <p class="batch-hint">
           遇到严重问题（P0/P1）或无后续大纲时将自动停止。
         </p>
         <div class="modal-actions">
@@ -1593,110 +1607,9 @@ const reviewText = computed({
 
 <style scoped>
 /* ═══════════════════════════════════════════════════════
-   WriteView — "墨砚书房" Aesthetic
-   A warm literary workspace for immersive novel writing.
-   Warm parchment tones, ink-dark accents, refined serif
-   typography, and a sense of crafted depth throughout.
+   WriteView — 晴窗编辑部写作台
+   白纸即稿件;正文即主角律:一切 chrome 为正文让路
    ═══════════════════════════════════════════════════════ */
-
-/* ─── Popup Notifications ─── */
-.popup-notification {
-  position: fixed;
-  top: 24px;
-  right: 24px;
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 20px;
-  border-radius: 14px;
-  box-shadow:
-    0 12px 40px rgba(60, 50, 35, 0.2),
-    0 0 0 1px rgba(255, 255, 255, 0.15) inset;
-  backdrop-filter: blur(16px) saturate(1.4);
-  color: white;
-  max-width: 380px;
-  font-size: 0.875rem;
-  letter-spacing: 0.01em;
-  background: linear-gradient(135deg, #5c4a32 0%, #8b7355 100%);
-}
-
-.popup-notification.info {
-  background: linear-gradient(135deg, #4a3c2a 0%, #7c6545 100%);
-}
-
-.popup-notification.success {
-  background: linear-gradient(135deg, #065f46 0%, #059669 100%);
-}
-
-.popup-notification.warning {
-  background: linear-gradient(135deg, #92400e 0%, #d97706 100%);
-}
-
-.popup-icon svg {
-  width: 22px;
-  height: 22px;
-  animation: spin 2s linear infinite;
-  opacity: 0.9;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.popup-content { flex: 1; }
-
-.popup-title {
-  font-weight: 600;
-  font-size: 13px;
-  margin-bottom: 3px;
-  letter-spacing: 0.02em;
-}
-
-.popup-message {
-  font-size: 12.5px;
-  opacity: 0.85;
-  line-height: 1.45;
-}
-
-.popup-close {
-  background: rgba(255, 255, 255, 0.12);
-  border: none;
-  color: white;
-  font-size: 16px;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s;
-  flex-shrink: 0;
-}
-
-.popup-close:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
-
-/* Popup Animation */
-.popup-enter-active {
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.popup-leave-active {
-  transition: all 0.25s ease-in;
-}
-
-.popup-enter-from {
-  opacity: 0;
-  transform: translateX(80px) scale(0.95);
-}
-
-.popup-leave-to {
-  opacity: 0;
-  transform: translateX(60px) scale(0.97);
-}
 
 /* ─── Root Layout ─── */
 .write-layout {
@@ -1704,30 +1617,19 @@ const reviewText = computed({
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background-color: #f8f6f1;
+  background-color: var(--card);
 }
 
 /* ─── Chapter Sidebar ─── */
 .chapter-nav {
   width: 280px;
-  border-right: 1px solid #e8e4da;
-  background: linear-gradient(180deg, #fdfcf9 0%, #f5f2eb 100%);
+  border-right: 1px solid var(--border);
+  background: var(--card);
   display: flex;
   flex-direction: column;
-  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width var(--dur-base) var(--ease-standard);
   flex-shrink: 0;
   position: relative;
-}
-
-.chapter-nav::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  background: linear-gradient(180deg, transparent, rgba(139, 115, 85, 0.08) 50%, transparent);
-  pointer-events: none;
 }
 
 .chapter-nav.collapsed {
@@ -1737,48 +1639,43 @@ const reviewText = computed({
 }
 
 .nav-header {
-  padding: 1.25rem 1.25rem 1rem;
+  padding: 1rem 1rem 0.75rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e8e4da;
-  background: rgba(255, 255, 255, 0.5);
+  border-bottom: 1px solid var(--border);
 }
 
 .nav-title {
-  font-size: 0.9375rem;
-  font-weight: 700;
-  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-primary);
   margin: 0;
   display: flex;
   align-items: center;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .nav-title svg {
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .icon-btn {
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid #e0dbd2;
+  background: transparent;
+  border: 1px solid var(--border);
   cursor: pointer;
   padding: 0.375rem;
-  border-radius: 8px;
-  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  color: var(--ink-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
 }
 
 .icon-btn:hover {
-  border-color: var(--primary);
-  color: var(--primary);
-  background: white;
-  box-shadow: 0 2px 8px rgba(139, 115, 85, 0.12);
-  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  color: var(--ink-primary);
+  background: var(--hover);
 }
 
 .chapter-list {
@@ -1786,17 +1683,17 @@ const reviewText = computed({
   overflow-y: auto;
   padding: 0.5rem 0.625rem;
   scrollbar-width: thin;
-  scrollbar-color: rgba(139, 115, 85, 0.15) transparent;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .chapter-list::-webkit-scrollbar { width: 4px; }
 .chapter-list::-webkit-scrollbar-track { background: transparent; }
 .chapter-list::-webkit-scrollbar-thumb {
-  background: rgba(139, 115, 85, 0.15);
+  background: var(--border-strong);
   border-radius: 9999px;
 }
 .chapter-list::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 115, 85, 0.3);
+  background: var(--ink-disabled);
 }
 
 /* Volume Groups */
@@ -1807,28 +1704,25 @@ const reviewText = computed({
 .volume-header {
   display: flex;
   align-items: center;
-  padding: 0.625rem 0.625rem 0.625rem 0.875rem;
+  padding: 0.55rem 0.625rem;
   cursor: pointer;
-  border-radius: 8px;
-  transition: all 0.2s;
-  font-weight: 650;
+  border-radius: var(--radius-md);
+  transition: background-color var(--dur-fast) var(--ease-standard);
+  font-weight: 500;
   font-size: 0.8125rem;
-  color: var(--text-primary);
-  border-left: 3px solid var(--primary);
-  margin-left: 0.125rem;
-  letter-spacing: 0.01em;
+  color: var(--ink-primary);
 }
 
 .volume-header:hover {
-  background: rgba(139, 115, 85, 0.05);
+  background: var(--hover);
 }
 
 .volume-arrow {
   width: 14px;
   height: 14px;
   margin-right: 0.5rem;
-  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease-standard);
+  color: var(--ink-muted);
   flex-shrink: 0;
 }
 
@@ -1846,19 +1740,22 @@ const reviewText = computed({
 }
 
 .volume-count {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
   font-size: 0.6875rem;
-  color: var(--text-muted);
+  color: var(--ink-muted);
   font-weight: 500;
-  background: rgba(0, 0, 0, 0.04);
-  padding: 1px 8px;
-  border-radius: 9999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
 
 .volume-chapters {
   padding-left: 0.375rem;
-  border-left: 1.5px solid rgba(139, 115, 85, 0.12);
-  margin-left: 0.75rem;
+  border-left: 1px solid var(--border);
+  margin-left: 0.85rem;
   margin-top: 2px;
   margin-bottom: 4px;
 }
@@ -1867,44 +1764,46 @@ const reviewText = computed({
 .chapter-item {
   display: flex;
   align-items: center;
-  padding: 0.5rem 0.75rem;
-  border-radius: 8px;
+  padding: 0.45rem 0.625rem;
+  border-radius: var(--radius-md);
   cursor: pointer;
   margin-bottom: 1px;
-  color: var(--text-secondary);
+  color: var(--ink-secondary);
   font-size: 0.8125rem;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  border: 1px solid transparent;
-  position: relative;
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+  font-weight: 400;
 }
 
 .chapter-item:hover {
-  background-color: rgba(139, 115, 85, 0.04);
-  color: var(--text-primary);
+  background-color: var(--hover);
+  color: var(--ink-primary);
 }
 
 .chapter-item.active {
-  background: linear-gradient(135deg, rgba(139, 115, 85, 0.06), rgba(139, 115, 85, 0.1));
-  color: var(--primary-dark);
-  font-weight: 600;
-  border-left: 3px solid var(--primary);
-  border-radius: 0 8px 8px 0;
-  box-shadow: 0 1px 3px rgba(139, 115, 85, 0.08);
+  background: var(--primary-tint);
+  color: var(--primary-on-tint);
+  font-weight: 500;
 }
 
 .chapter-num {
-  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
   margin-right: 0.625rem;
   font-size: 0.6875rem;
-  font-weight: 600;
-  background: linear-gradient(135deg, rgba(139, 115, 85, 0.1), rgba(139, 115, 85, 0.12));
-  color: var(--primary);
-  padding: 2px 8px;
-  border-radius: 6px;
+  font-weight: 500;
+  background: var(--surface);
+  color: var(--ink-muted);
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
   min-width: 1.75rem;
   text-align: center;
   flex-shrink: 0;
   line-height: 1.4;
+}
+
+.chapter-item.active .chapter-num {
+  background: transparent;
+  color: var(--primary-on-tint);
 }
 
 .chapter-name {
@@ -1920,34 +1819,33 @@ const reviewText = computed({
   height: 0.8125rem;
   flex-shrink: 0;
   margin-left: auto;
-  color: #059669;
-  opacity: 0.7;
+  color: var(--success);
+  opacity: 0.85;
 }
 
 .nav-footer {
-  padding: 0.75rem 1rem;
-  border-top: 1px solid #e8e4da;
+  padding: 0.625rem 0.875rem;
+  border-top: 1px solid var(--border);
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
-  background: rgba(255, 255, 255, 0.3);
 }
 
 .toggle-btn {
-  border: none;
-  background: rgba(0, 0, 0, 0.03);
-  color: var(--text-secondary);
+  border: 1px solid transparent;
+  background: var(--surface);
+  color: var(--ink-secondary);
   cursor: pointer;
   padding: 0.4375rem;
-  border-radius: 8px;
-  transition: all 0.2s;
+  border-radius: var(--radius-md);
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .toggle-btn:hover {
-  background: rgba(139, 115, 85, 0.08);
-  color: var(--primary);
+  background: var(--hover);
+  color: var(--ink-primary);
 }
 
 /* ─── Main Editor ─── */
@@ -1955,7 +1853,7 @@ const reviewText = computed({
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: #f8f6f1;
+  background-color: var(--card);
   position: relative;
   min-width: 0;
 }
@@ -1985,9 +1883,8 @@ const reviewText = computed({
   display: flex;
   flex-direction: column;
   gap: 0.625rem;
-  border-bottom: 1px solid #e8e4da;
-  background: linear-gradient(180deg, #fffffe 0%, #fdfcf9 100%);
-  box-shadow: 0 1px 4px rgba(60, 50, 35, 0.03);
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
   z-index: 10;
   position: relative;
 }
@@ -2001,6 +1898,8 @@ const reviewText = computed({
 .toolbar-actions {
   gap: 0.375rem;
   padding-top: 2px;
+  flex-wrap: wrap;
+  row-gap: 0.375rem;
 }
 
 .toolbar-group {
@@ -2016,7 +1915,7 @@ const reviewText = computed({
 .toolbar-divider {
   width: 1px;
   height: 1.25rem;
-  background: linear-gradient(180deg, transparent, #d5d0c6, transparent);
+  background: var(--border);
   flex-shrink: 0;
   margin: 0 0.25rem;
 }
@@ -2039,83 +1938,64 @@ const reviewText = computed({
 }
 
 .title-label {
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #9c958a;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--ink-muted);
 }
 
 .title-input {
   width: 100%;
-  font-size: 1.375rem;
-  font-weight: 700;
+  font-size: 1.25rem;
+  font-weight: 600;
   border: none;
   background: transparent;
   outline: none;
-  color: var(--text-primary);
-  font-family: 'Georgia', 'Noto Serif SC', 'Source Han Serif SC', serif;
-  letter-spacing: 0.01em;
+  color: var(--ink-primary);
+  font-family: var(--font-ui);
+  letter-spacing: -0.01em;
 }
 
 .title-input::placeholder {
-  color: #c4bfb4;
-  font-style: italic;
+  color: var(--ink-muted);
   font-weight: 400;
 }
 
 .divider { display: none; }
 
 .word-count-badge {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
   font-size: 0.75rem;
   font-weight: 500;
-  color: #9c958a;
-  font-variant-numeric: tabular-nums;
+  color: var(--ink-secondary);
   white-space: nowrap;
-  background: rgba(0, 0, 0, 0.03);
-  padding: 3px 10px;
-  border-radius: 9999px;
-  letter-spacing: 0.02em;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
 }
 
-/* Ghost button */
+/* Ghost delete button */
 .img-btn-ghost {
   background: transparent;
   border: none;
   padding: 0.375rem;
   box-shadow: none;
-  border-radius: 8px;
-  color: #b8b0a4;
-  transition: all 0.2s;
+  border-radius: var(--radius-md);
+  color: var(--ink-muted);
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
 }
 .img-btn-ghost:hover {
-  background: rgba(239, 68, 68, 0.06);
-  color: #ef4444;
+  background: var(--danger-tint);
+  color: var(--danger);
 }
 
-/* ─── Editor Writing Area ─── */
+/* ─── Editor Writing Area(正文即主角) ─── */
 .editor-wrapper {
   flex: 1;
   overflow: hidden;
-  background: linear-gradient(180deg, #fdfcf9 0%, #faf8f3 100%);
+  background: var(--card);
   position: relative;
-}
-
-.editor-wrapper::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(800px, 90%);
-  height: 100%;
-  background: white;
-  box-shadow:
-    -1px 0 0 #eee8dd,
-    1px 0 0 #eee8dd,
-    0 0 40px rgba(60, 50, 35, 0.03);
-  pointer-events: none;
-  z-index: 0;
 }
 
 .main-textarea {
@@ -2126,92 +2006,27 @@ const reviewText = computed({
   background: transparent;
   font-size: 1.0625rem;
   line-height: 2;
-  color: #2c2825;
+  color: var(--ink-primary);
   outline: none;
-  font-family: 'Georgia', 'Noto Serif SC', 'Source Han Serif SC', serif;
-  padding: 2.5rem 5rem;
+  font-family: var(--font-manuscript);
+  padding: 2.5rem 4.5rem;
   box-sizing: border-box;
   position: relative;
   z-index: 1;
   letter-spacing: 0.02em;
+  font-weight: 400;
 }
 
 .main-textarea::placeholder {
-  color: #cec7bb;
-  font-style: italic;
+  color: var(--ink-muted);
 }
 
 /* ─── Review Panel ─── */
-.review-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid #e8e4da;
-}
-
-.review-title {
-  font-weight: 700;
-  font-size: 0.875rem;
-  color: var(--text-primary);
-  letter-spacing: 0.02em;
-}
-
-.review-text-editor {
-  width: 100%;
-  flex: 1;
-  min-height: 200px;
-  font-size: 0.8125rem;
-  color: #3f3a35;
-  line-height: 1.7;
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid #e0dbd2;
-  border-radius: 10px;
-  resize: none;
-  font-family: 'SF Mono', 'Cascadia Code', 'Menlo', monospace;
-  outline: none;
-  padding: 1rem;
-  transition: all 0.25s;
-}
-
-.review-text-editor:hover {
-  border-color: #d0cac0;
-}
-
-.review-text-editor:focus {
-  background: rgba(255, 255, 255, 0.85);
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(139, 115, 85, 0.08);
-}
-
-.close-review {
-  background: rgba(0, 0, 0, 0.04);
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted);
-  padding: 0.3125rem;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.close-review:hover {
-  color: var(--text-primary);
-  background: rgba(0, 0, 0, 0.08);
-}
-
-.close-review svg {
-  width: 16px;
-  height: 16px;
-}
-
 .review-panel {
   width: 360px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #fdfcf9, #f8f6f1);
-  border-left: 1px solid #e8e4da;
+  background: var(--card);
+  border-left: 1px solid var(--border);
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
@@ -2219,24 +2034,78 @@ const reviewText = computed({
   height: 100%;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(139, 115, 85, 0.12) transparent;
+  scrollbar-color: var(--border-strong) transparent;
   position: relative;
 }
 
-.review-panel::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 1px;
-  background: linear-gradient(180deg, transparent, rgba(139, 115, 85, 0.1) 50%, transparent);
-  pointer-events: none;
+.review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-title {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--ink-primary);
+}
+
+.review-text-editor {
+  width: 100%;
+  flex: 1;
+  min-height: 200px;
+  font-size: 0.8125rem;
+  color: var(--ink-primary);
+  line-height: 1.7;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  resize: none;
+  font-family: var(--font-mono);
+  outline: none;
+  padding: 1rem;
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+  font-weight: 400;
+}
+
+.review-text-editor:hover {
+  border-color: var(--border-strong);
+}
+
+.review-text-editor:focus {
+  background: var(--card);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-tint);
+}
+
+.close-review {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-muted);
+  padding: 0.3125rem;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
+}
+
+.close-review:hover {
+  color: var(--ink-primary);
+  background: var(--hover);
+}
+
+.close-review svg {
+  width: 16px;
+  height: 16px;
 }
 
 /* Review slide transition */
 .review-slide-enter-active {
-  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.3s var(--ease-emerge);
 }
 .review-slide-leave-active {
   transition: all 0.2s ease-in;
@@ -2256,24 +2125,22 @@ const reviewText = computed({
   left: 1rem;
   top: 1.25rem;
   z-index: 50;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(8px);
-  border: 1px solid #e0dbd2;
-  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   padding: 0.4375rem;
   cursor: pointer;
-  color: var(--text-secondary);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  color: var(--ink-secondary);
+  box-shadow: var(--shadow-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
 }
 .expand-sidebar-btn:hover {
-  background: white;
-  color: var(--primary);
-  box-shadow: 0 4px 16px rgba(139, 115, 85, 0.12);
-  transform: translateY(-1px);
+  color: var(--ink-primary);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
 }
 
 /* ─── Status Toast ─── */
@@ -2281,25 +2148,29 @@ const reviewText = computed({
   position: fixed;
   right: 1.25rem;
   bottom: 1.25rem;
-  background: rgba(60, 50, 36, 0.78);
-  color: white;
+  background: var(--ink-primary);
+  color: var(--bg);
   padding: 0.5rem 1.25rem;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font-size: 0.8125rem;
   font-weight: 500;
-  z-index: 200;
-  box-shadow: 0 10px 28px rgba(60, 50, 35, 0.16);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  z-index: var(--z-toast);
+  box-shadow: var(--shadow-lg);
   pointer-events: none;
-  letter-spacing: 0.01em;
-  backdrop-filter: blur(14px) saturate(1.08);
   max-width: min(380px, calc(100vw - 2.5rem));
 }
 .status-toast.success {
-  background: linear-gradient(135deg, rgba(6, 95, 70, 0.82), rgba(5, 150, 105, 0.76));
+  background: var(--success);
+  color: #fff;
 }
 .status-toast.error {
-  background: linear-gradient(135deg, rgba(153, 27, 27, 0.84), rgba(220, 38, 38, 0.78));
+  background: var(--danger);
+  color: #fff;
+}
+
+[data-theme="dark"] .status-toast.success,
+[data-theme="dark"] .status-toast.error {
+  color: #10131A;
 }
 
 /* ─── Empty State ─── */
@@ -2308,7 +2179,7 @@ const reviewText = computed({
   align-items: center;
   justify-content: center;
   height: 100%;
-  background: linear-gradient(180deg, #fdfcf9, #f5f2eb);
+  background: var(--card);
 }
 
 .empty-content {
@@ -2317,25 +2188,25 @@ const reviewText = computed({
 }
 
 .empty-content h3 {
-  font-size: 1.375rem;
+  font-size: 1.125rem;
   margin-bottom: 0.625rem;
-  color: var(--text-primary);
-  font-family: 'Georgia', 'Noto Serif SC', serif;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  color: var(--ink-primary);
+  font-weight: 600;
 }
 
 .empty-content p {
-  color: #9c958a;
-  margin-bottom: 2rem;
+  color: var(--ink-muted);
+  margin-bottom: 1.75rem;
   font-size: 0.9375rem;
   line-height: 1.6;
+  font-weight: 400;
 }
 
 .empty-icon {
-  width: 3.5rem;
-  height: 3.5rem;
-  color: #c4bfb4;
+  width: 3rem;
+  height: 3rem;
+  color: var(--ink-muted);
+  opacity: 0.6;
   margin: 0 auto 1.25rem;
   display: block;
 }
@@ -2344,9 +2215,80 @@ const reviewText = computed({
 .btn-sm {
   padding: 0.3125rem 0.6875rem;
   font-size: 0.8125rem;
-  border-radius: 8px;
   font-weight: 500;
-  letter-spacing: 0.01em;
+}
+
+/* ─── 更多菜单 ─── */
+.more-wrap { position: relative; }
+
+.more-btn { padding: 0.3125rem 0.5rem; }
+
+.more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 148px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: var(--z-dropdown);
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.45rem 0.625rem;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard);
+  white-space: nowrap;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink-primary);
+}
+
+.menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-item.danger { color: var(--danger); }
+.menu-item.danger:hover:not(:disabled) {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+.menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+.menu-pop-enter-active {
+  transition: opacity var(--dur-fast) var(--ease-emerge), transform var(--dur-fast) var(--ease-emerge);
+}
+.menu-pop-leave-active {
+  transition: opacity 0.1s ease-in;
+}
+.menu-pop-enter-from {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.menu-pop-leave-to {
+  opacity: 0;
 }
 
 /* Header Actions */
@@ -2359,14 +2301,14 @@ const reviewText = computed({
 /* ─── Ending Button ─── */
 .ending-btn {
   margin-left: 0.5rem;
-  background: #fefce8;
-  color: #92400e;
-  border: 1px solid #fde68a;
+  background: var(--warning-tint);
+  color: var(--warning-strong);
+  border: 1px solid transparent;
 }
 .ending-btn:hover {
-  background: #fef9c3;
-  color: #78350f;
-  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
+  background: var(--warning-tint);
+  color: var(--warning-strong);
+  border-color: var(--warning);
 }
 
 /* ─── Loading State ─── */
@@ -2375,17 +2317,8 @@ const reviewText = computed({
   align-items: center;
   gap: 0.5rem;
   padding: 1.25rem;
-  color: var(--text-muted);
+  color: var(--ink-muted);
   font-size: 0.8125rem;
-}
-
-.spinner-sm {
-  width: 0.875rem;
-  height: 0.875rem;
-  border: 2px solid #e8e4da;
-  border-top-color: var(--primary);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
 }
 
 /* ─── Modal Styles ─── */
@@ -2395,25 +2328,24 @@ const reviewText = computed({
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(60, 50, 35, 0.35);
+  background: rgb(15 17 21 / 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
-  backdrop-filter: blur(6px);
+  z-index: var(--z-modal-backdrop);
 }
 
 .modal-content {
-  background: #fdfcf9;
-  padding: 2rem;
-  border-radius: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  padding: 1.5rem;
+  border-radius: var(--radius-lg);
   width: 90%;
   max-width: 500px;
-  box-shadow:
-    0 24px 64px rgba(60, 50, 35, 0.15),
-    0 0 0 1px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-xl);
   position: relative;
-  animation: modalPop 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: var(--z-modal);
+  animation: modalPop var(--dur-base) var(--ease-emerge);
 }
 
 .ending-modal {
@@ -2424,17 +2356,15 @@ const reviewText = computed({
 }
 
 .modal-title {
-  font-size: 1.375rem;
-  font-weight: 700;
+  font-size: 1.125rem;
+  font-weight: 600;
   margin-bottom: 1.25rem;
-  color: var(--text-primary);
-  text-align: center;
-  letter-spacing: 0.02em;
+  color: var(--ink-primary);
 }
 
 .modal-actions {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.625rem;
   justify-content: flex-end;
 }
 
@@ -2442,22 +2372,22 @@ const reviewText = computed({
   position: absolute;
   top: 1rem;
   right: 1rem;
-  background: rgba(0, 0, 0, 0.04);
+  background: transparent;
   border: none;
   font-size: 1.25rem;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  color: var(--text-muted);
+  color: var(--ink-muted);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard);
 }
 .close-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
-  color: var(--text-primary);
+  background: var(--hover);
+  color: var(--ink-primary);
 }
 
 .range-wrapper {
@@ -2466,38 +2396,76 @@ const reviewText = computed({
   gap: 1rem;
 }
 
-.range-wrapper input {
+.range-wrapper input[type="range"] {
   flex: 1;
   accent-color: var(--primary);
 }
 .range-val {
-  font-weight: 600;
-  font-family: 'SF Mono', monospace;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
   font-size: 0.875rem;
-  color: var(--primary);
+  color: var(--primary-text);
+}
+
+/* 自动连写弹窗 */
+.batch-desc {
+  color: var(--ink-secondary);
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.batch-num-input {
+  width: 52px;
+  text-align: center;
+  padding: 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-primary);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  font-size: 0.8125rem;
+}
+
+.batch-num-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--card);
+}
+
+.batch-unit {
+  font-size: 0.8125rem;
+  color: var(--ink-secondary);
+}
+
+.batch-hint {
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+  margin-bottom: 1rem;
 }
 
 .plan-chapters {
   overflow-y: auto;
   flex: 1;
-  border: 1px solid #e8e4da;
-  border-radius: 12px;
-  padding: 0.75rem;
-  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.375rem;
+  background: var(--surface);
 }
 
 .plan-chapter-item {
   padding: 0.875rem;
-  border-bottom: 1px solid #eee8dd;
-  border-radius: 8px;
-  transition: background 0.15s;
+  border-bottom: 1px solid var(--border);
+  transition: background-color var(--dur-fast) var(--ease-standard);
 }
 .plan-chapter-item:last-child { border-bottom: none; }
-.plan-chapter-item:hover { background: rgba(139, 115, 85, 0.03); }
+.plan-chapter-item:hover { background: var(--hover); }
 
 @keyframes modalPop {
-  from { opacity: 0; transform: scale(0.96) translateY(8px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* ─── Ending Modal Extras ─── */
@@ -2508,9 +2476,10 @@ const reviewText = computed({
 }
 
 .ending-desc {
-  color: #7c756b;
+  color: var(--ink-secondary);
   font-size: 0.9375rem;
   line-height: 1.6;
+  font-weight: 400;
 }
 
 .ending-form-group {
@@ -2531,29 +2500,31 @@ const reviewText = computed({
 
 .plan-strategy {
   padding: 0.875rem 1rem;
-  background: linear-gradient(135deg, rgba(139, 115, 85, 0.04), rgba(139, 115, 85, 0.06));
-  border-radius: 10px;
-  font-size: 0.9rem;
+  background: var(--primary-tint);
+  color: var(--primary-on-tint);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
   line-height: 1.6;
-  border: 1px solid rgba(139, 115, 85, 0.08);
+  font-weight: 400;
 }
 
 .plan-ch-title {
-  font-weight: 650;
-  color: var(--text-primary);
-  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ink-primary);
+  font-size: 0.875rem;
 }
 
 .plan-ch-summary {
   font-size: 0.8125rem;
-  color: var(--text-secondary);
+  color: var(--ink-secondary);
   margin-top: 0.375rem;
   line-height: 1.5;
+  font-weight: 400;
 }
 
 .plan-ch-purpose {
   font-size: 0.75rem;
-  color: var(--primary);
+  color: var(--primary-text);
   margin-top: 0.25rem;
   font-weight: 500;
 }
@@ -2565,24 +2536,23 @@ const reviewText = computed({
 
 .form-group label {
   display: block;
-  font-weight: 600;
+  font-weight: 500;
   margin-bottom: 0.5rem;
-  color: var(--text-primary);
+  color: var(--ink-secondary);
   font-size: 0.8125rem;
-  letter-spacing: 0.02em;
 }
 
 /* ─── Toast Transition ─── */
 .toast-enter-active {
-  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.3s var(--ease-emerge);
 }
 .toast-leave-active {
-  transition: all 0.25s ease-in;
+  transition: all 0.2s ease-in;
 }
 
 .toast-enter-from {
   opacity: 0;
-  transform: translateY(10px) scale(0.96);
+  transform: translateY(10px) scale(0.98);
 }
 
 .toast-leave-to {
@@ -2590,20 +2560,21 @@ const reviewText = computed({
   transform: translateY(8px);
 }
 
-/* ─── Responsive ─── */
-@media (max-width: 768px) {
+/* ─── Responsive:半屏分屏(≤960px)与移动端 ─── */
+@media (max-width: 960px) {
   .chapter-nav {
     position: absolute;
     height: 100%;
     z-index: 20;
-    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--shadow-lg);
   }
   .chapter-nav.collapsed { width: 0; border: none; box-shadow: none; }
   .editor-wrapper { padding: 0; }
   .editor-toolbar { padding: 0.625rem 1rem 0.5rem; }
-  .toolbar-actions { flex-wrap: wrap; }
+  /* 目录收起时展开按钮悬浮于左上,给工具栏让出位置 */
+  .editor-main:has(.expand-sidebar-btn) .editor-toolbar { padding-left: 3.25rem; }
   .title-input { font-size: 1.125rem; }
-  .main-textarea { padding: 1.5rem 1.25rem; }
+  .main-textarea { padding: 2rem 2rem; }
 
   .editor-area {
     flex-direction: column;
@@ -2614,15 +2585,13 @@ const reviewText = computed({
     height: auto;
     max-height: 50vh;
     border-left: none;
-    border-top: 1px solid #e8e4da;
-    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.06);
+    border-top: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
   }
 
   .review-slide-enter-from,
   .review-slide-leave-to {
     transform: translateY(100%);
   }
-
-  .editor-wrapper::before { display: none; }
 }
 </style>

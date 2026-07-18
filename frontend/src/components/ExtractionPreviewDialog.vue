@@ -20,16 +20,18 @@ const props = defineProps({
 
 const emit = defineEmits(['confirm', 'cancel'])
 
+import { User, Gem, ScrollText, Landmark, MapPin, RefreshCw, Zap, Skull, FileBarChart } from 'lucide-vue-next'
+
 // 分类配置
 const categories = [
-  { key: 'new_characters', label: '新角色', icon: '👤', formatter: (item) => `${item.name} — ${item.identity || '未知'} (${item.realm || '未知'}, ${item.location || '未知'})` },
-  { key: 'new_treasures', label: '新宝物', icon: '💎', formatter: (item) => `${item.name} — ${item.tier || '未知'} (${item.owner || '未知'})` },
-  { key: 'new_techniques', label: '新功法', icon: '📜', formatter: (item) => `${item.name} — ${item.tier || '未知'} (${item.practitioner || '未知'})` },
-  { key: 'new_organizations', label: '新势力', icon: '🏛', formatter: (item) => `${item.name} — ${item.type || '未知'} (${item.relation || '未知'})` },
-  { key: 'new_locations', label: '新地点', icon: '📍', formatter: (item) => `${item.name} — ${item.type || '未知'}` },
-  { key: 'status_changes', label: '状态变更', icon: '🔄', formatter: (item) => `${item.name} → ${item.change || item.status || '变更'}` },
-  { key: 'entity_events', label: '实体事件', icon: '⚡', formatter: (item) => `${item.name}: ${item.event || ''}` },
-  { key: 'exits', label: '角色下线', icon: '💀', formatter: (item) => `${item.name} — ${item.reason || '下线'}` },
+  { key: 'new_characters', label: '新角色', icon: User, formatter: (item) => `${item.name} — ${item.identity || '未知'} (${item.realm || '未知'}, ${item.location || '未知'})` },
+  { key: 'new_treasures', label: '新宝物', icon: Gem, formatter: (item) => `${item.name} — ${item.tier || '未知'} (${item.owner || '未知'})` },
+  { key: 'new_techniques', label: '新功法', icon: ScrollText, formatter: (item) => `${item.name} — ${item.tier || '未知'} (${item.practitioner || '未知'})` },
+  { key: 'new_organizations', label: '新势力', icon: Landmark, formatter: (item) => `${item.name} — ${item.type || '未知'} (${item.relation || '未知'})` },
+  { key: 'new_locations', label: '新地点', icon: MapPin, formatter: (item) => `${item.name} — ${item.type || '未知'}` },
+  { key: 'status_changes', label: '状态变更', icon: RefreshCw, formatter: (item) => `${item.name} → ${item.change || item.status || '变更'}` },
+  { key: 'entity_events', label: '实体事件', icon: Zap, formatter: (item) => `${item.name}: ${item.event || ''}` },
+  { key: 'exits', label: '角色下线', icon: Skull, formatter: (item) => `${item.name} — ${item.reason || '下线'}` },
 ]
 
 // 每个 item 的选中状态：{ [categoryKey]: boolean[] }
@@ -166,7 +168,7 @@ function onCancel() {
                     @change="toggleCategory(cat.key)"
                   />
                 </label>
-                <span class="epd-cat-icon">{{ cat.icon }}</span>
+                <span class="epd-cat-icon"><component :is="cat.icon" :size="16" :stroke-width="1.5" /></span>
                 <span class="epd-cat-label">{{ cat.label }}</span>
                 <span class="epd-cat-count">({{ cat.items.length }})</span>
               </div>
@@ -189,7 +191,7 @@ function onCancel() {
                 <label class="epd-cat-checkbox" @click.stop>
                   <input type="checkbox" v-model="statusFileEnabled" />
                 </label>
-                <span class="epd-cat-icon">📊</span>
+                <span class="epd-cat-icon"><FileBarChart :size="16" :stroke-width="1.5" /></span>
                 <span class="epd-cat-label">实时状态更新</span>
                 <span class="epd-cat-count">(1)</span>
               </div>
@@ -226,7 +228,7 @@ function onCancel() {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: rgb(15 17 21 / 0.45);
   backdrop-filter: blur(4px);
   z-index: 100;
   display: flex;

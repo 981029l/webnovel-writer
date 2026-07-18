@@ -78,7 +78,7 @@ function onCancel() {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: rgb(15 17 21 / 0.45);
   backdrop-filter: blur(4px);
   z-index: 100;
   display: flex;

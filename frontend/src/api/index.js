@@ -98,6 +98,7 @@ function getAuthHeaders() {
 export const aiApi = {
     getConfig: () => api.get('/ai/config'),
     updateConfig: (config) => api.put('/ai/config', config),
+    setAgentMode: (enabled) => api.put('/ai/agent-mode', { enabled }),
     testConnection: () => api.get('/ai/test'),
     getModels: () => api.get('/ai/models'),
     getGenres: () => api.get('/ai/genres'),
@@ -135,6 +136,16 @@ export const aiApi = {
     polishChapter: (chapterId, content, suggestions, mode = 'rewrite') => api.post('/ai/polish', { chapter_id: chapterId, content, suggestions, mode }),
     generateSynopsis: () => api.post('/ai/generate-synopsis'),
     generateTitles: () => api.post('/ai/generate-titles'),
+    goldenFingerChatStream: (data) => fetch(`${api.defaults.baseURL}/ai/golden-finger-chat-stream`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data)
+    }),
+    goldenFingerGenerateStream: (data) => fetch(`${api.defaults.baseURL}/ai/golden-finger-generate-stream`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(data)
+    }),
     updateProjectInfo: (data) => api.put('/projects/info', data),
     generateEndingPlan: (remainingChapters) => api.post('/ai/ending-plan', { remaining_chapters: remainingChapters })
 }
