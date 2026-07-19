@@ -21,12 +21,21 @@ from services.genre_catalog import (
     get_trope_keywords,
     get_knowledge_preferred_files,
     get_template_preferred_files,
-    get_opening_instruction,
     get_template_aliases,
     GENERIC_POSITIVE_STYLE,
-    GENERIC_OPENING_INSTRUCTION,
 )
 from services.project_prompt_store import get_project_prompt_content
+from services.prompt_fallbacks import (
+    AUX_FALLBACKS,
+    AUX_FILENAMES,
+    EXTRACT_CONTRACT,
+    OUTLINE_MASTER_CONTRACT,
+    OUTLINE_POLISH_CONTRACT,
+    OUTLINE_REWRITE_CONTRACT,
+    OUTLINE_VOLUME_CONTRACT,
+    OUTLINE_VOLUME_CONTRACT_CONT,
+    SLOT_FALLBACKS,
+)
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -958,29 +967,6 @@ class SkillExecutor:
         style_text = get_positive_style(key)
         genre_label = genre or key
         return f"【{genre_label}正向风格锚定】当前阶段：{stage}。\n{style_text}"
-
-    def _build_opening_chapter_instruction(self, genre: str, substyle: str, chapter: int, chapter_outline: str = "") -> str:
-        """给第1章补一段条件式约束，只强化大纲已有内容。"""
-        if chapter != 1:
-            return ""
-
-        key = self._normalize_genre_key(genre)
-        substyle_text = self._safe_text(substyle)
-        outline_hint = "以下要求只用于强化本章大纲已有内容，禁止为了满足节奏私自新增事件、收益、反制、机缘或结局。"
-
-        specific = get_opening_instruction(key)
-        if specific:
-            return (
-                "【第1章开篇约束（以大纲为准）】\n"
-                f"{outline_hint}\n"
-                f"{specific}"
-            )
-        # 通用回退
-        return (
-            f"【第1章开篇约束（以大纲为准）】当前子风格：{substyle_text or '未指定'}。\n"
-            f"{outline_hint}\n"
-            f"{GENERIC_OPENING_INSTRUCTION}"
-        )
 
     def _has_abrupt_tail(self, content: str) -> bool:
         """检测正文是否疑似半句截断。"""
@@ -2764,75 +2750,68 @@ class SkillExecutor:
         except Exception as e:
             yield {"type": "step", "step": "9c", "name": "AI 设计主角卡", "status": "failed", "error": str(e)}
 
-        # 3. 生成总纲 - 使用流式
+        # 3. 生成总纲 - 使用流式（模板来自项目槽位快照，按题材/子风格独立）
         yield {"type": "step", "step": 10, "name": "AI 规划全书总纲", "status": "processing"}
         try:
             world = self._read_file(self.project_root / "设定集" / "世界观.md")
             power = self._read_file(self.project_root / "设定集" / "力量体系.md")
             char = self._read_file(self.project_root / "设定集" / "主角卡.md")
 
-            prompt = f"""请为《{title}》规划全书总纲（约600-1000章体量，分为12卷）。
+            master_template = self._load_slot_template_or_fallback("outline_master")
+            prompt = self._render_slot_template(master_template, {
+                "title": title,
+                "genre": genre,
+                "substyle": effective_substyle or "（默认）",
+                "independent_stage_prompt": independent_stage_prompt or "",
+                "genre_guard": genre_guard,
+                "positive_style_instruction": positive_style_instruction,
+                "substyle_instruction": substyle_instruction or "（无）",
+                "world": world[:800],
+                "power": power[:500],
+                "char": char[:500],
+                "gold_finger": (golden_finger_design or "").strip() or "（无）",
+                "additional_info": additional_info or "（无）",
+                "trope_focus": trope_focus or "（无）",
+                "style_guide": style_guide or "",
+                "substyle_examples": substyle_examples or "（无）",
+                "genre_examples": style_examples or "（无）",
+            }) + OUTLINE_MASTER_CONTRACT
 
-【命名与标题语域（硬约束）】
-章节标题、卷名、以及一切会写进正文世界的名词（人物/势力/功法/装置/系统词条）必须使用符合本题材世界观的语言；禁止现代职场/统计/网络词汇入名（如"数据、KPI、复盘、成本、上线"）。大纲中的策划性说明（爽点设计、数值/状态等工作栏目）不受此限。
-
-{independent_stage_prompt if independent_stage_prompt else ""}
-
-【题材锁定】
-{genre_guard}
-
-【题材笔调校准】
-{positive_style_instruction}
-
-【子风格锁定】
-{substyle_instruction if substyle_instruction else "（无）"}
-
-【设定参考】
-{world[:800]}
-{power[:500]}
-{char[:500]}
-
-【用户补充设定】
-{additional_info if additional_info else "（无）"}
-
-【题材核心节奏】
-{trope_focus if trope_focus else "（无）"}
-{style_guide if style_guide else ""}
-
-【子风格示例（按当前子风格抽取）】
-{substyle_examples if substyle_examples else "（无）"}
-
-【题材示例（按当前题材动态加载）】
-{style_examples if style_examples else "（无）"}
-要求：学习风格而非复写句子。
-
-【要求】
-1. 每卷必须包含：标题、预计章数（如50-80章）、核心冲突、关键爽点、卷末高潮
-2. 节奏层层递进，符合{genre} / {effective_substyle} 的爽文结构
-3. 使用 Markdown 格式，每卷格式示例：
-   ## 第X卷 《卷名》（约XX章）
-   - **核心冲突**：...
-   - **关键爽点**：...
-   - **卷末高潮**：..."""
-
-            # 使用流式 AI 调用
+            # 使用流式 AI 调用（富格式总纲每卷 ~600-2000 tokens，12 卷需数万；
+            # 完整性用内容哨兵判定：模板硬性要求末尾「伏笔台账」汇总，未出现即未写完。
+            # 不单押 finish_reason——部分网关不回传 "length"，会造成截断被误判为自然结束。
+            master_messages = [{"role": "user", "content": prompt}]
             outline_content = ""
-            async for chunk in self.ai_service.chat_stream(
-                [{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=5000
-            ):
-                if not chunk:
-                    continue
-                if chunk.startswith("[ERROR]"):
-                    yield {"type": "step", "step": 10, "name": "AI 规划全书总纲", "status": "failed", "error": chunk}
-                    return
-                outline_content += chunk
-                # Emit content chunk for frontend streaming
-                yield {"type": "content", "chunk": chunk, "target": "total_outline"}
-            
+            for round_idx in range(4):
+                messages = master_messages if round_idx == 0 else master_messages + [
+                    {"role": "assistant", "content": outline_content},
+                    {"role": "user", "content": (
+                        "继续输出剩余内容：从上文中断处无缝衔接（若最后一行被截断先补完该行），"
+                        "依次输出后续卷直至总纲完整（含末尾伏笔台账汇总）。"
+                        "禁止重复已输出内容，禁止任何前言或解释。"
+                    )},
+                ]
+                if round_idx > 0:
+                    yield {"type": "step", "step": 10, "name": f"总纲尚未写完，自动续写（第 {round_idx} 轮）", "status": "processing"}
+                async for chunk in self.ai_service.chat_stream(messages, temperature=0.7, max_tokens=12000):
+                    if not chunk:
+                        continue
+                    if chunk.startswith("[ERROR]"):
+                        yield {"type": "step", "step": 10, "name": "AI 规划全书总纲", "status": "failed", "error": chunk}
+                        return
+                    outline_content += chunk
+                    # Emit content chunk for frontend streaming
+                    yield {"type": "content", "chunk": chunk, "target": "total_outline"}
+                if round_idx > 0:
+                    yield {"type": "step", "step": 10, "name": f"总纲尚未写完，自动续写（第 {round_idx} 轮）", "status": "completed"}
+                tail_complete = "伏笔台账" in outline_content[-3000:]
+                if tail_complete and getattr(self.ai_service, "last_finish_reason", None) != "length":
+                    break
+
             (self.project_root / "大纲" / "总纲.md").write_text(outline_content, encoding="utf-8")
             self._clear_outline_invalidation_state()
+            if "伏笔台账" not in outline_content[-3000:]:
+                yield {"type": "step", "step": 10, "name": "总纲多次续写后仍未见「伏笔台账」收尾，可能不完整，请检查后用「重新规划总纲」补全", "status": "failed"}
             yield {"type": "step", "step": 10, "name": "AI 规划全书总纲", "status": "completed"}
         except Exception as e:
             yield {"type": "step", "step": 10, "name": "AI 规划全书总纲", "status": "failed", "error": str(e)}
@@ -3115,9 +3094,9 @@ class SkillExecutor:
 
 【你的工作方式】
 1. 你是在和作者对话，一次只聚焦一个关键问题，循序渐进，不要一次抛出一堆问题。
-2. 引导顺序建议：核心能力 → 触发/获取方式 → 代价与限制（避免无敌太早）→ 成长阶段（前中后期）→ 后期收尾/终极形态 → 隐藏能力/反转。
+2. 引导顺序建议：全书体量（打算写多少章或多少万字——这决定成长阶段怎么拆，必须在前两个问题内问清）→ 核心能力 → 触发/获取方式 → 代价与限制（避免无敌太早）→ 成长阶段（按体量拆前中后期，标注各阶段大致章节区间）→ 后期收尾/终极形态 → 隐藏能力/反转。
 3. 每轮回复简短口语化：先用一两句回应/肯定作者的想法，指出可以加强或补漏的点，再提出下一个具体问题。
-4. 主动给建议和示例，不要只会反问。作者拿不定主意时，直接给 2-3 个可选方案让其挑。
+4. 主动给建议和示例，不要只会反问。作者拿不定主意时，直接给 2-3 个可选方案让其挑（问体量时也给参考档位：短篇 30-60 章 / 标准长篇 300-600 章 / 超长篇 1000 章+）。
 5. 不要在对话里输出最终的完整设定文档，那一步由作者点「生成设定」后单独完成。你现在的任务是把设定聊清楚聊完整。
 6. 全程使用中文。"""
 
@@ -3167,13 +3146,14 @@ class SkillExecutor:
 第一部分，另起一行以 `===书名===` 开头，其后每行一个候选书名，格式为「书名 | 一句话理由」，给出 3-5 个，突出金手指爽点。
 第二部分，另起一行以 `===金手指===` 开头，其后是完整的金手指设定 Markdown 文档，一级标题为「# 金手指设计」，包含（按需，尽量完整）：
 - 系统名称 / 核心能力（一句话点题）
+- 体量规划（全书预计章数或字数——严格采用作者在对话中给出的数字；若作者未给出，按题材惯例给建议值并标注「建议」）
 - 系统功能（分条，每条给能力说明，可带简短示例）
 - 获取/掠夺规则（普通/高级/神级如何获得）
 - 融合与进化（举例）
 - 商城/兑换（如有）
 - 限制与代价（重点：如何避免无敌太早，前中后期上限差异、寿命/反噬等代价）
 - 隐藏能力/终极反转（如有）
-- 主角成长路线（前期废柴逆袭 → 中期收割 → 后期真相/终局）
+- 主角成长路线（按体量拆分：前期废柴逆袭 → 中期收割 → 后期真相/终局，每个大阶段标注大致章节区间）
 
 【要求】
 1. 忠实于对话内容，把作者聊过的点都落进去；作者没定的细节由你补全，保持自洽。
@@ -3423,90 +3403,70 @@ class SkillExecutor:
                 budgets.get("current_outline", 12000),
             )
 
-            prompt = f"""请为《{title}》重新规划全书总纲。
+            rewrite_template = self._load_slot_template_or_fallback("outline_rewrite")
+            prompt = self._render_slot_template(rewrite_template, {
+                "title": title,
+                "genre": genre,
+                "substyle": substyle or "（默认）",
+                "independent_stage_prompt": independent_stage_prompt or "",
+                "genre_guard": genre_guard,
+                "positive_style_instruction": positive_style_instruction,
+                "substyle_instruction": substyle_instruction or "（无）",
+                "guidance": guidance_for_prompt or "（无）",
+                "world": world_for_prompt or "（暂无）",
+                "power": power_for_prompt or "",
+                "char": char_for_prompt or "",
+                "gold_finger": gold_finger_for_prompt or "",
+                "entity_libraries": entity_for_prompt or "",
+                "trope_focus": trope_for_prompt or "（无）",
+                "style_guide": style_for_prompt or "",
+                "substyle_examples": substyle_examples or "（无）",
+                "genre_examples": example_for_prompt or "（无）",
+                "current_outline": outline_for_prompt or "（空）",
+            }) + OUTLINE_REWRITE_CONTRACT
 
-【命名与标题语域（硬约束）】
-章节标题、卷名、以及一切会写进正文世界的名词（人物/势力/功法/装置/系统词条）必须使用符合本题材世界观的语言；禁止现代职场/统计/网络词汇入名（如"数据、KPI、复盘、成本、上线"）。大纲中的策划性说明（爽点设计、数值/状态等工作栏目）不受此限。
-
-【题材】
-{genre} / {substyle}
-
-{independent_stage_prompt if independent_stage_prompt else ""}
-
-【题材锁定】
-{genre_guard}
-
-【题材笔调校准】
-{positive_style_instruction}
-
-【子风格锁定】
-{substyle_instruction if substyle_instruction else "（无）"}
-
-【用户指导意见】
-{guidance_for_prompt}
-
-【设定参考】
-{world_for_prompt}
-{power_for_prompt}
-{char_for_prompt}
-{gold_finger_for_prompt}
-{entity_for_prompt}
-
-【参考：题材核心节奏】
-{trope_for_prompt}
-{style_for_prompt}
-【参考：子风格示例（按当前子风格抽取）】
-{substyle_examples if substyle_examples else "（无）"}
-【参考：题材表达示例（按当前题材动态加载）】
-{example_for_prompt if example_for_prompt else "（无）"}
-要求：学习风格而非复写句子。
-
-【当前文稿】
-{outline_for_prompt}
-
-【核心任务】
-请**完整重写**上述总纲文件。如果当前文稿为空或仅有骨架，请尽情发挥。
-结构要求：
-1. 卷名格式：## 第X卷 《卷名》（约XX-XX章）
-2. 为每一卷（建议10-12卷）设计：
-   - **预计章数**：如"约50-60章"
-   - **核心冲突**：本卷主要矛盾
-   - **关键爽点**：让读者爽的高光时刻
-   - **卷末高潮**：本卷结局
-   - **关键伏笔**：为后续埋下的线索
-3. 整体节奏要前松后紧，每一卷都要有明确的升级或地图切换。
-
-格式示例：
-## 第1卷 《崛起之初》（约50-60章）
-- **预计章数**：50-60章
-- **核心冲突**：废柴少年获得系统，从底层崛起
-- **关键爽点**：首次打脸装逼，废柴逆袭
-- **卷末高潮**：击败宗门内最大敌人
-
-请输出完整的 Markdown 内容："""
-
-            # 动态计算 max_tokens：根据目标章节数估算
-            # 假设平均每卷 50 章，每卷摘要约 150 tokens
-            # 对于 1200 章的小说（约 12 卷），需要约 12 * 150 = 1800 tokens
-            # 加上格式和说明，设置为 12000 确保完整
+            # 动态计算 max_tokens：富格式总纲（卷级节点+伏笔台账+题材附加要求）
+            # 每卷实际 ~600-900 tokens；按 700/卷 + 3000 基础估算，下限 12000。
+            # finish_reason=="length" 时自动续写，最多 2 轮，仍截断则明示警告。
             state = self._load_state() or {}
             target_chapters = state.get("project_info", {}).get("target_chapters", 600)
             estimated_volumes = max(1, (target_chapters + 49) // 50)  # 向上取整
-            dynamic_max_tokens = max(6000, estimated_volumes * 200 + 2000)
+            dynamic_max_tokens = max(12000, estimated_volumes * 700 + 3000)
 
+            replan_messages = [{"role": "user", "content": prompt}]
             full_content = ""
-            async for chunk in self.ai_service.chat_stream(
-                [{"role": "user", "content": prompt}],
-                temperature=0.7,
-                max_tokens=dynamic_max_tokens
-            ):
-                if not chunk:
-                    continue
-                if chunk.startswith("[ERROR]"):
-                    yield make_event("error", message=chunk)
-                    return
-                full_content += chunk
-                yield make_event("content", chunk=chunk)
+            for round_idx in range(4):
+                messages = replan_messages if round_idx == 0 else replan_messages + [
+                    {"role": "assistant", "content": full_content},
+                    {"role": "user", "content": (
+                        "继续输出剩余内容：从上文中断处无缝衔接（若最后一行被截断先补完该行），"
+                        "依次输出后续卷直至总纲完整（含末尾伏笔台账汇总）。"
+                        "禁止重复已输出内容，禁止任何前言或解释。"
+                    )},
+                ]
+                if round_idx > 0:
+                    yield make_event("step", name=f"总纲尚未写完，自动续写（第 {round_idx} 轮）", status="processing")
+                async for chunk in self.ai_service.chat_stream(
+                    messages,
+                    temperature=0.7,
+                    max_tokens=dynamic_max_tokens
+                ):
+                    if not chunk:
+                        continue
+                    if chunk.startswith("[ERROR]"):
+                        yield make_event("error", message=chunk)
+                        return
+                    full_content += chunk
+                    yield make_event("content", chunk=chunk)
+                if round_idx > 0:
+                    yield make_event("step", name=f"总纲尚未写完，自动续写（第 {round_idx} 轮）", status="completed")
+                # 内容哨兵：模板硬性要求末尾「伏笔台账」汇总；不单押 finish_reason
+                # （部分网关不回传 "length"，截断会被误判为自然结束）。
+                tail_complete = "伏笔台账" in full_content[-3000:]
+                if tail_complete and getattr(self.ai_service, "last_finish_reason", None) != "length":
+                    break
+
+            still_incomplete = "伏笔台账" not in full_content[-3000:]
 
             (self.project_root / "大纲" / "总纲.md").write_text(full_content, encoding="utf-8")
             self._clear_outline_invalidation_state()
@@ -3517,7 +3477,11 @@ class SkillExecutor:
                 self._sync_protagonist_profile(protagonist_name)
 
             yield make_event("step", name="AI 规划总纲", status="completed")
-            yield make_event("done", success=True, message="总纲规划完成")
+            done_message = "总纲规划完成"
+            if still_incomplete:
+                yield make_event("step", name="总纲多次续写后仍未见「伏笔台账」收尾，可能不完整，请检查", status="failed")
+                done_message = "总纲已生成，但多次续写后仍未检测到「伏笔台账」收尾，可能不完整，请检查最后一卷"
+            yield make_event("done", success=True, message=done_message)
 
         except Exception as e:
             yield make_event("error", message=str(e))
@@ -3628,10 +3592,10 @@ class SkillExecutor:
                              break
                     
                     if prev_content:
-                        # 找最大章节号
-                        chap_matches = re.findall(r"第\s*(\d+)\s*章", prev_content)
-                        if chap_matches:
-                            max_chap = max(int(c) for c in chap_matches)
+                        # 找最大章节号（仅认行首章节标题，避免被"预计回收第N章"等引用欺骗）
+                        header_nums = self._chapter_header_numbers(prev_content)
+                        if header_nums:
+                            max_chap = max(header_nums)
                             if max_chap >= start_chapter:
                                 start_chapter = max_chap + 1
             
@@ -3694,102 +3658,229 @@ class SkillExecutor:
 3. **状态变化**：角色重要状态变化（如怀孕、生产、突破等）
 """
             
-            system_prompt = f"""你是一位专业的网文大纲策划师。请严格根据【总纲】和【设定】，为第 {volume} 卷生成详细大纲。
+            volume_template = self._load_slot_template_or_fallback("outline_volume")
+            volume_mapping = {
+                "volume": volume,
+                "chapters_count": chapters_count,
+                "start_chapter": start_chapter,
+                "end_chapter": end_chapter,
+                # 全卷范围：分批时卷标题仍须标注完整范围，与批次覆盖范围区分
+                "vol_start_chapter": start_chapter,
+                "vol_end_chapter": end_chapter,
+                "title": title,
+                "genre": genre,
+                "substyle": substyle or "（默认）",
+                "independent_stage_prompt": independent_stage_prompt or "",
+                "genre_guard": genre_guard,
+                "positive_style_instruction": positive_style_instruction,
+                "substyle_instruction": substyle_instruction or "（无）",
+                "prev_vol_context": prev_vol_context or "",
+                "character_context": character_context or "",
+                "opening_rule": opening_rule,
+                "volume_outline": volume_outline_for_prompt or "（暂无，请自行构思）",
+                "world": world_for_prompt or "（暂无）",
+                "power": power_for_prompt or "（暂无）",
+                "char": char_for_prompt or "（暂无）",
+                "gold_finger": gold_finger_for_prompt or "（暂无）",
+                "entity_libraries": entity_for_prompt or "（暂无）",
+                "chapter_planning": chapter_planning_for_prompt or "",
+                "conflict_design": conflict_design_for_prompt or "",
+                "trope_focus": trope_for_prompt or "",
+                "style_guide": style_for_prompt or "",
+                "substyle_examples": substyle_examples or "（无）",
+                "genre_examples": example_for_prompt or "（无）",
+            }
 
-【命名与标题语域（硬约束）】
-章节标题、以及一切会写进正文世界的名词（人物/势力/功法/装置/系统词条）必须使用符合本题材世界观的语言；禁止现代职场/统计/网络词汇入名（如"数据、KPI、复盘、成本、上线"）。大纲中的策划性说明（爽点设计、数值/状态等工作栏目）不受此限。
-
-【小说信息】
-- 书名：《{title}》
-- 题材：{genre}
-- 子风格：{substyle}
-
-{independent_stage_prompt if independent_stage_prompt else ""}
-
-【题材锁定】
-{genre_guard}
-
-【题材笔调校准】
-{positive_style_instruction}
-
-【子风格锁定】
-{substyle_instruction if substyle_instruction else "（无）"}
-
-{prev_vol_context}
-
-{character_context}
-
-【第 {volume} 卷总纲摘要】
-{volume_outline_for_prompt if volume_outline_for_prompt else "（暂无，请自行构思）"}
-
-【世界观设定】
-{world_for_prompt if world_for_prompt else "（暂无）"}
-
-【力量体系】
-{power_for_prompt if power_for_prompt else "（暂无）"}
-
-【主角设定】
-{char_for_prompt if char_for_prompt else "（暂无）"}
-
-【金手指/系统设定】
-{gold_finger_for_prompt if gold_finger_for_prompt else "（暂无）"}
-
-【实体库标准名】
-{entity_for_prompt if entity_for_prompt else "（暂无）"}
-
-【规划参考】
-{chapter_planning_for_prompt if chapter_planning_for_prompt else ""}
-{conflict_design_for_prompt if conflict_design_for_prompt else ""}
-{trope_for_prompt if trope_for_prompt else ""}
-{style_for_prompt if style_for_prompt else ""}
-【子风格示例（按当前子风格抽取）】
-{substyle_examples if substyle_examples else "（无）"}
-【题材示例（按当前题材动态加载）】
-{example_for_prompt if example_for_prompt else "（无）"}
-要求：学习表达风格，不照抄句子。
-
-【输出要求】
-1. 第一行必须是卷标题，格式：# 第 {volume} 卷：【卷名】（第 {start_chapter}-{end_chapter} 章）
-{opening_rule}
-3. 必须严格遵循上方总纲摘要中的剧情走向和爽点
-4. 生成第 {start_chapter} 章到第 {end_chapter} 章，共 {chapters_count} 章的详细大纲
-5. 章节编号必须从 {start_chapter} 开始，依次递增！
-6. 每章格式：**第X章：章节标题**，包含主要情节、爽点设计
-7. 确保人物名、地点名、势力名与设定一致
-8. 使用 Markdown 格式
-9. **在大纲末尾添加"本卷角色规划"部分**（如果有活跃角色表）
-
-⚠️ **【极重要】数值变化必须明确标注**：
-涉及战斗、伤亡、资源消耗的章节，必须在大纲中**明确写出具体数字或估算范围**！
-✅ 正确示例：
-   - 【伤亡】外围死士阵亡约2000人，仅存约1200人
-   - 【消耗】爆炎符消耗50张，剩余约30张
-   - 【气运】家族气运-500（因人员死亡）
-   - 【状态】顾承厄重伤（内脏震荡，需休养3天）
-❌ 错误示例：
-   - "死伤惨重"（太模糊！必须写具体数字）
-   - "消耗了大量资源"（必须说明消耗了什么、多少）"""
-
-            # 动态计算 max_tokens：基础 2000 + 每章 250 tokens
-            # 60章需要约 17000 tokens，确保不会被截断
-            dynamic_max_tokens = max(8000, 2000 + chapters_count * 250)
+            # 章级方法论格式下每章大纲约 600-900 tokens，长卷一次生成必然截断——
+            # 超过 SEGMENT_SIZE 章时分批生成，逐批续写同一卷。
+            SEGMENT_SIZE = 15
+            seg_bounds = []
+            seg_start_cursor = start_chapter
+            while seg_start_cursor <= end_chapter:
+                seg_end_cursor = min(seg_start_cursor + SEGMENT_SIZE - 1, end_chapter)
+                seg_bounds.append((seg_start_cursor, seg_end_cursor))
+                seg_start_cursor = seg_end_cursor + 1
+            total_batches = len(seg_bounds)
 
             full_content = ""
-            async for chunk in self.ai_service.chat_stream(
-                [
+            any_truncation = False
+            for seg_idx, (seg_start, seg_end) in enumerate(seg_bounds, start=1):
+                seg_count = seg_end - seg_start + 1
+                is_first = seg_idx == 1
+                is_last = seg_idx == total_batches
+
+                seg_mapping = dict(volume_mapping)
+                seg_mapping.update({
+                    "chapters_count": seg_count,
+                    "start_chapter": seg_start,
+                    "end_chapter": seg_end,
+                })
+                if not is_first:
+                    tail = self._truncate_text(full_content, 1500, keep_tail=True)
+                    seg_mapping["prev_vol_context"] = (
+                        "【本卷已生成部分的结尾（仅供衔接，禁止重复或改写）】\n"
+                        f"{tail}\n\n"
+                        f"⚠️ 你正在续写同一卷大纲：从第 {seg_start} 章继续，剧情自然承接上文最后一章。"
+                    )
+                    seg_mapping["opening_rule"] = (
+                        f"2. 从第 {seg_start} 章直接继续，与已生成的第 {seg_start - 1} 章自然衔接，禁止跳跃或割裂。"
+                    )
+
+                contract = OUTLINE_VOLUME_CONTRACT if is_first else OUTLINE_VOLUME_CONTRACT_CONT
+                system_prompt = (
+                    self._render_slot_template(volume_template, seg_mapping)
+                    + self._render_slot_template(contract, seg_mapping)
+                )
+                if total_batches > 1:
+                    roster_note = (
+                        f"输出完第 {seg_end} 章后，在末尾附上「本卷角色规划」部分。"
+                        if is_last
+                        else "本批禁止输出「本卷角色规划」部分（留待最后一批统一输出）。"
+                    )
+                    system_prompt += (
+                        f"\n\n【分批说明（系统级）】本卷共 {chapters_count} 章，分 {total_batches} 批生成；"
+                        f"当前为第 {seg_idx}/{total_batches} 批，只输出第 {seg_start}-{seg_end} 章。{roster_note}"
+                        "批次只是生成方式，最终文档是一份完整卷纲——禁止在输出中出现「本批」「批次」等字样或任何过程性概览段落。"
+                    )
+
+                # 每章按富格式估算 ~650 tokens，另留基础开销
+                seg_max_tokens = max(6000, 2000 + seg_count * 650)
+
+                if total_batches > 1:
+                    yield make_event(
+                        "step",
+                        name=f"AI 规划详细大纲（第 {seg_idx}/{total_batches} 批：第 {seg_start}-{seg_end} 章）",
+                        status="processing",
+                    )
+
+                # 截断自愈：finish_reason=="length" 或末章缺失时自动续写，最多 2 轮
+                seg_messages = [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"请详细规划第 {volume} 卷的 {chapters_count} 章大纲"}
-                ],
-                temperature=0.7,
-                max_tokens=dynamic_max_tokens
-            ):
-                if not chunk:
-                    continue
-                if chunk.startswith("[ERROR]"):
-                    yield make_event("error", message=chunk)
-                    return
-                full_content += chunk
-                yield make_event("content", chunk=chunk)
+                    {"role": "user", "content": f"请规划第 {volume} 卷第 {seg_start}-{seg_end} 章的详细大纲"}
+                ]
+                seg_content = ""
+                for round_idx in range(3):
+                    messages = seg_messages if round_idx == 0 else seg_messages + [
+                        {"role": "assistant", "content": seg_content},
+                        {"role": "user", "content": (
+                            f"继续输出剩余章节：从上文中断处无缝衔接（若最后一章未写完先补完该章），"
+                            f"直到第 {seg_end} 章全部输出。禁止重复已输出章节，禁止任何前言或解释。"
+                        )},
+                    ]
+                    if round_idx > 0:
+                        yield make_event(
+                            "step",
+                            name=f"第 {seg_idx}/{total_batches} 批输出被截断，自动续写（第 {round_idx} 轮）",
+                            status="processing",
+                        )
+                        # 续写护栏：截断尾若无换行，续写的章节标题会与残句粘连成一行
+                        if seg_content and not seg_content.endswith("\n"):
+                            seg_content += "\n"
+                    async for chunk in self.ai_service.chat_stream(
+                        messages,
+                        temperature=0.7,
+                        max_tokens=seg_max_tokens
+                    ):
+                        if not chunk:
+                            continue
+                        if chunk.startswith("[ERROR]"):
+                            yield make_event("error", message=chunk)
+                            return
+                        seg_content += chunk
+                        yield make_event("content", chunk=chunk)
+                    if round_idx > 0:
+                        yield make_event(
+                            "step",
+                            name=f"第 {seg_idx}/{total_batches} 批输出被截断，自动续写（第 {round_idx} 轮）",
+                            status="completed",
+                        )
+                    seg_reached_end = seg_end in set(self._chapter_header_numbers(seg_content))
+                    if seg_reached_end:
+                        break
+                    if getattr(self.ai_service, "last_finish_reason", None) != "length":
+                        # 自然结束但没写到末章：同样按缺章续写
+                        continue
+
+                # 缺章判定与定点补写：仅认行首章节标题，伏笔台账等引用不计数
+                missing_chaps = [
+                    n for n in range(seg_start, seg_end + 1)
+                    if n not in set(self._chapter_header_numbers(seg_content))
+                ]
+                if missing_chaps:
+                    miss_label = "、".join(f"第{n}章" for n in missing_chaps[:12])
+                    yield make_event(
+                        "step",
+                        name=f"第 {seg_idx}/{total_batches} 批缺章（{miss_label}），定点补写",
+                        status="processing",
+                    )
+                    if seg_content and not seg_content.endswith("\n"):
+                        seg_content += "\n"
+                    repair_messages = seg_messages + [
+                        {"role": "assistant", "content": seg_content},
+                        {"role": "user", "content": (
+                            f"检测到以下章节缺失或未以行首标题形式给出：{miss_label}。"
+                            f"请仅补写这些缺失章节，每章必须以行首标题「**第N章：标题**」开头，"
+                            f"格式与其余章节完全一致；禁止重复或改写已存在的章节，禁止输出任何解释。"
+                        )},
+                    ]
+                    async for chunk in self.ai_service.chat_stream(
+                        repair_messages,
+                        temperature=0.7,
+                        max_tokens=seg_max_tokens
+                    ):
+                        if not chunk:
+                            continue
+                        if chunk.startswith("[ERROR]"):
+                            yield make_event("error", message=chunk)
+                            return
+                        seg_content += chunk
+                        yield make_event("content", chunk=chunk)
+                    still_missing = [
+                        n for n in range(seg_start, seg_end + 1)
+                        if n not in set(self._chapter_header_numbers(seg_content))
+                    ]
+                    yield make_event(
+                        "step",
+                        name=f"第 {seg_idx}/{total_batches} 批缺章（{miss_label}），定点补写",
+                        status="completed" if not still_missing else "failed",
+                    )
+                    if still_missing:
+                        any_truncation = True
+                        yield make_event(
+                            "step",
+                            name=f"第 {seg_idx}/{total_batches} 批补写后仍缺：{'、'.join('第%d章' % n for n in still_missing)}，请检查该批",
+                            status="failed",
+                        )
+
+                # 代码级清理：剥掉模型可能违反契约写入的过程性内容
+                # 1) 「本批概览/批次说明」段落（连同前置分隔线，截至下一个标题）
+                seg_content = re.sub(
+                    r"\n(?:-{3,}\s*\n+)?#{1,3}\s*本批[^\n]*\n[\s\S]*?(?=\n#{1,3}\s|\n\*\*第|\Z)",
+                    "\n",
+                    seg_content,
+                )
+                if is_first:
+                    # 2) 首批卷标题若被写成批次范围，改写为全卷范围
+                    seg_content = re.sub(
+                        rf"^(#\s*第\s*{volume}\s*卷[^\n（(]*)[（(]第\s*\d+\s*[-–—]\s*\d+\s*章[）)]",
+                        rf"\1（第 {start_chapter}-{end_chapter} 章）",
+                        seg_content.lstrip(),
+                        count=1,
+                    )
+                else:
+                    # 3) 续写批次若无视契约重复了卷标题/角色规划，剥掉再拼接
+                    seg_content = re.sub(r"^\s*#\s*第\s*\d+\s*卷[^\n]*\n?", "", seg_content.lstrip())
+                    if not is_last:
+                        seg_content = re.sub(r"\n#{0,3}\s*\**本卷角色规划\**[\s\S]*$", "", seg_content)
+
+                full_content = seg_content if is_first else (full_content.rstrip() + "\n\n" + seg_content.lstrip())
+
+                if total_batches > 1:
+                    yield make_event(
+                        "step",
+                        name=f"AI 规划详细大纲（第 {seg_idx}/{total_batches} 批：第 {seg_start}-{seg_end} 章）",
+                        status="completed",
+                    )
 
             outline_dir = self.project_root / "大纲"
             outline_dir.mkdir(parents=True, exist_ok=True)
@@ -3815,7 +3906,10 @@ class SkillExecutor:
                 yield make_event("step", name="创建角色档案", status="skipped")
             
             yield make_event("step", name="AI 规划详细大纲", status="completed")
-            yield make_event("done", success=True, path=str(outline_file), content=full_content)
+            done_message = "分卷大纲生成完成"
+            if any_truncation:
+                done_message = "分卷大纲已生成，但部分批次多次续写后仍不完整，请检查标红批次的章节"
+            yield make_event("done", success=True, path=str(outline_file), content=full_content, message=done_message)
         else:
             yield make_event("error", message="AI 服务未配置")
 
@@ -3868,42 +3962,17 @@ class SkillExecutor:
             max_chars=budgets.get("genre_examples", 900),
         )
         
-        system_prompt = """你是一位专业的网文大纲医生。请根据用户的修改要求，对已有的大纲进行润色和优化。
-        
-        【核心任务】
-        根据用户的【修改要求】，重写或优化大纲内容。
-        
-        【注意事项】
-        1. **结构保持**：尽量保持原有的章节号和整体架构，除非用户要求重组。
-        2. **针对性修改**：如果是要求"增加数值"，请在每章末尾补充具体的伤亡/消耗统计。
-        3. **格式规范**：输出标准的 Markdown 大纲。
-        4. **完整性**：输出完整的大纲内容，不要只输出修改片段。
-        
-        【数值标记规范（关键）】
-        如果用户要求添加数值，请参考以下格式：
-        - 【伤亡】xxx (如：死士阵亡500人)
-        - 【消耗】xxx (如：气运消耗200点)
-        - 【状态】xxx (如：重伤、突破)
-
-        """ + (independent_stage_prompt + "\n\n" if independent_stage_prompt else "") + """
-
-        【题材锁定（最高优先级）】
-        当前题材：""" + genre + """
-        """ + genre_guard + """
-        """ + positive_style_instruction + """
-        """ + substyle_instruction + """
-        若修改要求未明确要求跨题材试验，文风必须严格锁定在当前题材范式内。
-
-        【题材风格参考】
-        """ + (style_for_prompt if style_for_prompt else "（无）") + """
-
-        【子风格示例（按当前子风格抽取）】
-        """ + (substyle_examples_for_prompt if substyle_examples_for_prompt else "（无）") + """
-
-        【题材示例（按当前题材动态加载）】
-        """ + (style_examples_for_prompt if style_examples_for_prompt else "（无）") + """
-        要求：只学习语气与节奏，不照抄原句。
-        """
+        polish_outline_template = self._load_slot_template_or_fallback("outline_polish")
+        system_prompt = self._render_slot_template(polish_outline_template, {
+            "genre": genre,
+            "independent_stage_prompt": independent_stage_prompt or "",
+            "genre_guard": genre_guard,
+            "positive_style_instruction": positive_style_instruction,
+            "substyle_instruction": substyle_instruction or "",
+            "style_guide": style_for_prompt or "（无）",
+            "substyle_examples": substyle_examples_for_prompt or "（无）",
+            "genre_examples": style_examples_for_prompt or "（无）",
+        }) + OUTLINE_POLISH_CONTRACT
         
         user_prompt = f"""【已有大纲】
 {content_for_prompt}
@@ -4644,132 +4713,6 @@ class SkillExecutor:
         except Exception as e:
              return {"success": False, "error": str(e)}
 
-    # ==================== Auto State Extraction ====================
-    async def execute_state_extraction(self, chapter_id: int, content: str) -> Dict[str, Any]:
-        """AI 自动设定收容与状态追踪 (方案B核心)"""
-        if not getattr(self, "ai_service", None):
-            return {"success": False, "error": "AI Service not initialized"}
-            
-        # 1. 读取 prompt 模板
-        tmpl = self._load_project_prompt("extract_state")
-        
-        # 2. 准备上下文 (核心约束/存量设定)
-        state_data = self._load_state() or {}
-        core_constraints = state_data.get("core_settings", "无")
-        style_bundle, normalized_genre, normalized_substyle = self._build_project_stage_style_bundle(
-            stage="状态抽取",
-            genre_style_chars=500,
-            genre_examples_chars=0,
-            substyle_examples_chars=0,
-        )
-        substyle_display = normalized_substyle or "默认子风格"
-        style_section = (
-            f"\n\n【当前阶段题材协议】\n{style_bundle}\n\n【题材】\n{normalized_genre} / {substyle_display}\n"
-            if style_bundle
-            else ""
-        )
-        
-        system_prompt = (
-            tmpl.replace("{core_constraints}", str(core_constraints)).replace("{content}", content) + style_section
-        )
-        
-        # 3. 请求 AI (要求 JSON 格式)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"请对第{chapter_id}章提取设定和状态，请直接输出合法的JSON格式，禁止输出Markdown代码块，不用回答任何废话。"}
-        ]
-        
-        self._debug(f"[EXTRACT DEBUG] 开始提取第 {chapter_id} 章设定...")
-        try:
-            result_chunks = []
-            async for chunk in self.ai_service.chat_stream(messages, temperature=0.1):
-                if chunk is not None:
-                    result_chunks.append(chunk)
-            
-            result_str = "".join(result_chunks).strip()
-            
-            # 尝试解析 JSON
-            if "```json" in result_str:
-                json_str = result_str.split("```json")[1].split("```")[0].strip()
-            elif "```" in result_str:
-                json_str = result_str.split("```")[1].split("```")[0].strip()
-            else:
-                json_str = result_str
-                
-            data = json.loads(json_str)
-            
-            # 4. 落盘: 新建立体设定文件（复用统一去重+命名归一）
-            new_entities = data.get("new_entities", [])
-            category_map = {
-                "角色": "角色库",
-                "角色库": "角色库",
-                "人物": "角色库",
-                "宝物": "宝物库",
-                "法宝": "宝物库",
-                "功法": "功法库",
-                "武技": "功法库",
-                "势力": "势力库",
-                "组织": "势力库",
-                "地点": "地点库",
-                "场景": "地点库",
-            }
-
-            for entity in new_entities:
-                raw_category = self._safe_text(entity.get("category", "其他")).strip()
-                category = category_map.get(raw_category, raw_category)
-                if category not in {"角色库", "宝物库", "功法库", "势力库", "地点库"}:
-                    continue
-                name = self._normalize_entity_name(entity.get("name", ""))
-                desc = self._safe_text(entity.get("description", "")).strip()
-                
-                if name and desc:
-                    if category == "角色库":
-                        role_dir = self.project_root / "设定集" / "角色库" / "次要角色"
-                        role_dir.mkdir(parents=True, exist_ok=True)
-                        existing_file = self._find_character_file_by_name(name)
-                        file_path = existing_file or (role_dir / f"{name}.md")
-                    else:
-                        cat_dir = self.project_root / "设定集" / category
-                        cat_dir.mkdir(parents=True, exist_ok=True)
-                        existing_file = self._find_entity_file_in_dir(cat_dir, name)
-                        file_path = existing_file or (cat_dir / f"{name}.md")
-                    canonical_name = file_path.stem
-                    header = f"# {name}\n\n- **分类**: {category}\n- **首次出现**: 第{chapter_id}章\n\n## 设定描述\n"
-                    
-                    with self._locked_file(file_path):
-                        if file_path.exists():
-                            # 追加模式
-                            with file_path.open("a", encoding="utf-8") as f:
-                                f.write(f"\n### 第{chapter_id}章更新\n{desc}\n")
-                        else:
-                            # 新建模式
-                            with file_path.open("w", encoding="utf-8") as f:
-                                f.write(header.replace(f"# {name}", f"# {canonical_name}") + desc + "\n")
-            
-            # 5. 落盘: 更新 state.json 中的 dynamic_state
-            state_updates = data.get("state_updates", [])
-            if state_updates:
-                def apply_dynamic_state(s: Dict[str, Any]) -> None:
-                    dynamic = s.setdefault("dynamic_state", {})
-                    for update in state_updates:
-                        target = self._normalize_entity_name(update.get("target", ""))
-                        key = self._safe_text(update.get("key", "")).strip()
-                        new_val = update.get("new_value", "")
-                        if not target or not key:
-                            continue
-                        row = dynamic.setdefault(target, {})
-                        row[key] = new_val
-                        row["_last_updated_chapter"] = chapter_id
-
-                self._update_state(apply_dynamic_state)
-                
-            self._debug(f"[EXTRACT DEBUG] 提取成功: 发现 {len(new_entities)} 个新实体, {len(state_updates)} 项状态更新")
-            return {"success": True, "entities": new_entities, "updates": state_updates}
-            
-        except Exception as e:
-            self._debug(f"[EXTRACT DEBUG] ❌ 提取失败: {e}")
-            return {"success": False, "error": str(e)}
-
     # ==================== Context Agent ====================
 
     async def _execute_context_agent(self, chapter: int) -> Dict[str, Any]:
@@ -4889,7 +4832,7 @@ class SkillExecutor:
     def _load_project_prompt(self, slot_id: str, genre: str = "", substyle: str = "") -> str:
         effective_genre = genre or self._get_project_genre()
         effective_substyle = substyle or self._get_project_substyle()
-        return self._safe_text(
+        text = self._safe_text(
             get_project_prompt_content(
                 self.project_root,
                 slot_id,
@@ -4897,6 +4840,21 @@ class SkillExecutor:
                 effective_substyle,
             )
         ).strip()
+        # 剥离生成器写入的首行标记（<!-- generated slot=... gen_hash=... -->），不进提示词。
+        text = re.sub(r"^<!--\s*generated[^>]*-->\s*\n?", "", text)
+        return text.strip()
+
+    @staticmethod
+    def _chapter_header_numbers(text: str) -> List[int]:
+        """仅从行首章节标题解析章号（**第N章：/## 第N章 等）。
+
+        绝不使用全文 "第N章" 子串匹配——伏笔台账的"预计回收第N章"、
+        正文里的章节引用都会伪造更大的章号，导致跳章/缺章。
+        """
+        return [
+            int(m)
+            for m in re.findall(r"(?m)^\s*(?:#{1,6}\s*)?\*{0,2}\s*第\s*(\d+)\s*章", text or "")
+        ]
 
     def _load_style_package_file(self, filename: str, genre: str = "", substyle: str = "") -> str:
         """从题材/子风格独立包读取文件(子风格级物理隔离,无共享层)。"""
@@ -4939,11 +4897,72 @@ class SkillExecutor:
         safe_kwargs = {k: self._safe_text(v) for k, v in kwargs.items()}
         try:
             return template.format(**safe_kwargs)
-        except (KeyError, ValueError):
+        except Exception:
+            # 模板可能含裸 {}/{0} 等（KeyError/ValueError/IndexError），退回逐个替换。
             text = template
             for k, v in safe_kwargs.items():
                 text = text.replace(f"{{{k}}}", v)
             return text
+
+    def _render_slot_template(self, template: str, mapping: Dict[str, Any]) -> str:
+        """槽位模板渲染：纯逐个 replace，绝不走 str.format。
+
+        新槽位模板（大纲/提取/连摘）含大量裸 JSON 花括号，str.format 会抛
+        IndexError/KeyError；replace 语义也与前端缺失变量检测一致。
+        """
+        text = self._safe_text(template)
+        if not text:
+            return ""
+        for key, value in mapping.items():
+            text = text.replace("{" + key + "}", self._safe_text(value))
+        return text
+
+    def _load_slot_template_or_fallback(self, slot_id: str) -> str:
+        """加载项目槽位模板；为空时退回内置兜底常量并告警，生成链路永不静默降级。"""
+        template = self._load_project_prompt(slot_id)
+        if template:
+            return template
+        fallback = SLOT_FALLBACKS.get(slot_id, "")
+        if fallback:
+            print(f"[PROMPT] 槽位 {slot_id} 项目模板为空，已使用内置兜底模板")
+        return fallback
+
+    # 场景技巧辅助文件的触发词表：按章节大纲关键词条件加载，命中顺序即优先级。
+    SCENE_TECHNIQUE_TRIGGERS = [
+        ("combat_scenes", ("战斗", "厮杀", "交手", "打斗", "开战", "伏击", "追杀", "斗法", "交锋", "围攻", "突围")),
+        ("emotion_psychology", ("哭", "告白", "诀别", "崩溃", "决裂", "离别", "吵架", "悲痛", "动情", "和好", "殉")),
+        ("dialogue_writing", ("谈判", "对质", "摊牌", "审问", "密谈", "说服", "盘问", "对峙")),
+        ("scene_description", ("宴", "大典", "集市", "庆典", "婚礼", "葬礼", "开业", "祭祀", "日常")),
+    ]
+
+    def _load_scene_technique_bundle(
+        self,
+        chapter_outline: str,
+        max_files: int = 2,
+        per_file_chars: int = 900,
+    ) -> str:
+        """按本章大纲关键词加载子风格包内的场景技巧指南（战斗/情绪/对话/场面）。
+
+        最多注入 max_files 个、每个截断至 per_file_chars 字，控制 token 开销；
+        包文件缺失或为空时回退内置中性兜底。
+        """
+        outline_text = self._safe_text(chapter_outline)
+        if not outline_text.strip():
+            return ""
+
+        parts: List[str] = []
+        for key, keywords in self.SCENE_TECHNIQUE_TRIGGERS:
+            if len(parts) >= max_files:
+                break
+            if not any(k in outline_text for k in keywords):
+                continue
+            text = self._safe_text(self._load_style_package_file(AUX_FILENAMES[key]))
+            text = re.sub(r"^<!--\s*generated[^>]*-->\s*\n?", "", text).strip()
+            if not text:
+                text = AUX_FALLBACKS.get(key, "")
+            if text:
+                parts.append(self._truncate_text(text, per_file_chars, keep_tail=False))
+        return "\n\n".join(parts)
 
     def _adapt_independent_prompt_for_stage(self, prompt: str, stage: str) -> str:
         text = self._safe_text(prompt).strip()
@@ -5587,7 +5606,13 @@ class SkillExecutor:
         entity_libraries = context_pack.get("global", {}).get("entity_libraries", "")
         genre = context_pack.get("global", {}).get("genre", "") or self._get_project_genre()
         substyle = context_pack.get("global", {}).get("substyle", "") or self._get_project_substyle()
-        opening_chapter_instruction = self._build_opening_chapter_instruction(genre, substyle, chapter, chapter_outline)
+        # 黄金三章：前三章注入开篇协议（模板来自项目槽位快照，按题材/子风格独立）
+        opening_three_block = ""
+        if chapter <= 3:
+            opening_three_block = self._render_slot_template(
+                self._load_slot_template_or_fallback("opening_three"),
+                {"chapter": chapter, "genre": genre, "substyle": substyle or "（默认）"},
+            )
 
         # 构建前情提要
         recent_context = ""
@@ -5700,6 +5725,14 @@ class SkillExecutor:
         else:
             prompt_layers.append(self.ANTI_AI_STYLE_INSTRUCTION)
 
+        # 场景技巧指南：按本章大纲关键词条件加载（战斗/情绪/场面/对话，最多 2 个、各限 ~900 字）
+        scene_techniques = self._load_scene_technique_bundle(
+            chapter_outline,
+            per_file_chars=write_budget.get("scene_techniques", 900),
+        )
+        if scene_techniques:
+            prompt_layers.append(scene_techniques)
+
         prompt_layers.append(hard_constraints_prompt)
         system_prompt = "\n\n".join(part for part in prompt_layers if part)
 
@@ -5724,11 +5757,10 @@ class SkillExecutor:
 
 **重要**：涉及境界、突破条件、战力上限时，必须使用上方体系，不得自创新等级名。"""
 
-        if opening_chapter_instruction:
+        if opening_three_block:
             system_prompt += f"""
 
-【开篇章节约束（必须遵守）】
-{opening_chapter_instruction}
+{opening_three_block}
 """
 
         # 注入写手 Agent 写前调研资料（方案 B：agent 自主查阅的伏笔/角色/设定补充）
@@ -6004,129 +6036,25 @@ class SkillExecutor:
         substyle_display = normalized_substyle or "默认子风格"
         style_section = f"【当前阶段题材协议】\n{style_bundle}\n\n" if style_bundle else ""
 
+        # 模板来自项目槽位快照（按题材/子风格独立），循环外加载渲染一次；
+        # 分块变量（chunk_index/chunk_total/content）在每块替换。
+        # 契约块由代码追加，保证模板怎么编辑都不破坏 JSON 落库解析。
+        extract_template = self._load_slot_template_or_fallback("extract_state")
+        base_extract_prompt = self._render_slot_template(extract_template, {
+            "style_section": style_section,
+            "chapter": chapter,
+            "genre": normalized_genre,
+            "substyle": substyle_display,
+            "roster": roster_for_prompt,
+            "existing_techniques": techniques_for_prompt,
+        }) + EXTRACT_CONTRACT
+
         def build_extract_prompt(chunk_content: str, chunk_index: int, chunk_total: int) -> str:
-            return f"""{style_section}你是小说世界观分析助手。请分析第{chapter}章的内容，提取新出现的重要元素。
-
-【题材】
-{normalized_genre} / {substyle_display}
-
-【抽取片段】
-当前处理第 {chunk_index}/{chunk_total} 段（仅输出当前片段中明确出现的事实，禁止臆测）。
-
-【当前已有角色】
-{roster_for_prompt}
-
-【当前已有功法（标准名，必须优先复用）】
-{techniques_for_prompt}
-
-【第{chapter}章内容片段】
-{chunk_content}
-
-请提取本章**新出现**的重要元素（排除已有角色和路人），输出 JSON：
-```json
-{{
-  "new_characters": [
-    {{
-      "name": "角色名",
-      "importance": "major/minor/villain",
-      "identity": "身份（正妻/妾室/敌将/盟友/下属等）",
-      "relation": "与主角关系",
-      "appearance": "外貌描写",
-      "personality": "性格特点",
-      "realm": "当前境界（如炼气三层、筑基初期）",
-      "location": "当前地点（如青云城、外门演武场）",
-      "first_action": "本章主要行为"
-    }}
-  ],
-  "new_treasures": [
-    {{
-      "name": "宝物名称",
-      "tier": "品级（如：地级上品、天级等）",
-      "effect": "效果/用途",
-      "owner": "当前持有者",
-      "origin": "来源/出处",
-      "previous_version": "前身名称（若为旧物升级/破损修复，填旧名称，否则留空）"
-    }}
-  ],
-  "new_techniques": [
-    {{
-      "name": "功法/武技名称",
-      "tier": "等级（如：玄级、地级等）",
-      "effect": "效果/特点",
-      "practitioner": "修炼者",
-      "origin": "来源/出处",
-      "previous_version": "前身名称（若为进阶/补全/融合，填旧名称，否则留空）"
-    }}
-  ],
-  "new_organizations": [
-    {{
-      "name": "势力名称",
-      "type": "类型（宗门/家族/国家/帮派等）",
-      "strength": "实力等级",
-      "relation": "与主角关系（敌对/中立/友好）",
-      "key_figures": "关键人物"
-    }}
-  ],
-  "new_locations": [
-    {{
-      "name": "地点名称",
-      "type": "类型（城市/秘境/山脉等）",
-      "features": "特点",
-      "importance": "重要性说明"
-    }}
-  ],
-  "status_changes": [
-    {{
-      "name": "角色名",
-      "status": "当前状态（如重伤、死亡、闭关中）",
-      "realm": "最新境界（未变化填空字符串）",
-      "location": "最新地点（未变化填空字符串）",
-      "change": "状态变化简述（如突破筑基、重伤昏迷）"
-    }}
-  ],
-  "entity_events": [
-    {{"name": "实体名称", "type": "character/treasure/technique", "event": "本章发生的关键事件/重要行为/特殊用途"}}
-  ],
-  "exits": [
-    {{"name": "角色名", "reason": "下线原因"}}
-  ],
-  "status_file_updates": {{
-    "chapter_event": "本章最重要的事件概述（一句话）",
-    "event_consequence": "该事件的数值/状态后果",
-    "character_updates": [
-      {{"name": "角色名", "current_status": "新状态", "body_condition": "身体状况", "note": "备注"}}
-    ],
-    "resource_updates": [
-      {{"resource_name": "资源名", "new_value": "新值", "reason": "变化原因"}}
-    ],
-    "troop_casualties": {{
-      "dead_count": "死亡人数（数字或估算如'约500人'）",
-      "wounded_count": "受伤人数",
-      "surviving_count": "存活人数（如果正文提到）",
-      "unit_name": "部队名称（如'外围死士'、'夜不收'等）",
-      "description": "伤亡描述"
-    }},
-    "new_items": [
-      {{"name": "物品名", "status": "状态", "description": "说明"}}
-    ]
-  }}
-}}
-```
-
-⚠️ **重点关注以下数值变化**：
-1. **人口伤亡**：死士、私兵、百姓的死亡/受伤人数（必须提取！）
-2. **气运/香火值**：增减数值和原因
-3. **属性点**：主角消耗或获得的自由属性点
-4. **军事力量变化**：部队折损、阵法损坏、诡兵符消耗等
-
-如果正文中描述了"大量阵亡"、"折损过半"、"仅剩数百"等，请在 troop_casualties 中记录！
-
-⚠️ **命名统一规则（必须遵守）**：
-1. 若正文提到的功法与【当前已有功法】显然是同一招式（简称/别称/口语化写法），不要在 `new_techniques` 新建重复档案。
-2. 优先使用功法库标准名；如确需新增，请确保不是已有功法的别名。
-3. `previous_version` 尽量填写可追溯的前身名称，用于后续自动归并。
-
-如果某类没有变化，输出空数组。只输出 JSON，不要其他内容。"""
+            return self._render_slot_template(base_extract_prompt, {
+                "chunk_index": chunk_index,
+                "chunk_total": chunk_total,
+                "content": chunk_content,
+            })
 
         try:
             merged_data: Dict[str, Any] = {}
@@ -7189,31 +7117,14 @@ class SkillExecutor:
             continuity_budget.get("content", 9000),
             keep_tail=True,
         )
-        prompt = f"""你是一位负责维护小说连续性的编辑。请仔细阅读以下第{chapter}章内容，提取所有【下一章必须遵守】的关键信息。
-
-【第{chapter}章内容】
-{content_for_prompt}
-
-请自由总结以下内容（如果有的话）：
-1. **场景状态**：当前地点、时间、环境状况
-2. **目击者**：有没有其他人看到了什么？他们的反应是什么？这些人会怎么做？
-3. **角色状态**：主角和重要角色现在的位置、伤情、情绪
-4. **遗留物品**：尸体、武器、血迹、证据等需要处理的东西
-5. **未完成事件**：正在发生但没结束的事、承诺要做的事
-6. **信息差**：谁知道什么、谁不知道什么
-7. **悬念/钩子**：本章结尾的悬念是什么
-8. **任何其他重要细节**：你认为下一章必须考虑的任何信息
-
-【重要】：请特别注意那些容易被忽略但会导致逻辑漏洞的细节！
-比如：有围观群众却假装没人看到、角色明明受伤了却突然生龙活虎、时间地点突然跳跃等。
-
-【写作要求】
-1. 只保留事实、状态、位置、数量、因果、承诺、未完成事项。
-2. 禁止复述原文修辞，禁止保留氛围词、情绪渲染、镜头语言、比喻和文学化表达。
-3. 禁止使用“阴冷”“死寂”“压抑”“诡异”“毛骨悚然”等风格词，除非它本身是剧情规则或角色对白中的必要事实。
-4. 输出要像制作组交接清单，不像小说摘要。
-
-请用简洁清晰的条目列出，不要遗漏任何关键信息。"""
+        # 模板来自项目槽位快照（按题材/子风格独立），含本题材专属盯防清单。
+        continuity_template = self._load_slot_template_or_fallback("continuity_summary")
+        prompt = self._render_slot_template(continuity_template, {
+            "chapter": chapter,
+            "content": content_for_prompt,
+            "genre": self._get_project_genre(),
+            "substyle": self._get_project_substyle() or "默认子风格",
+        })
 
         try:
             result = await self.ai_service.chat(
