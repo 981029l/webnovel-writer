@@ -51,24 +51,74 @@ atexit.register(_cleanup)
 
 # ─────────── 环境检查 ───────────
 
+def _playwright_browser_dirs() -> list:
+    """按平台返回 Playwright 浏览器可能的安装目录（含环境变量覆盖）。"""
+    import sys
+    candidates = []
+    env_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "").strip()
+    if env_path and env_path != "0":
+        candidates.append(Path(env_path))
+    if sys.platform == "win32":
+        local_app = os.environ.get("LOCALAPPDATA", "")
+        if local_app:
+            candidates.append(Path(local_app) / "ms-playwright")
+        candidates.append(Path.home() / "AppData" / "Local" / "ms-playwright")
+    elif sys.platform == "darwin":
+        candidates.append(Path.home() / "Library" / "Caches" / "ms-playwright")
+    else:
+        candidates.append(Path.home() / ".cache" / "ms-playwright")
+    # PLAYWRIGHT_BROWSERS_PATH=0 时浏览器装在包目录内
+    try:
+        import playwright as _pw
+        candidates.append(Path(_pw.__file__).parent / "driver" / "package" / ".local-browsers")
+    except Exception:
+        pass
+    return candidates
+
+
+def _probe_chromium_executable() -> bool:
+    """权威兜底：向 Playwright 本身查询 chromium 可执行文件路径。
+
+    必须在无事件循环的线程中运行（sync API 限制），调用方经 _pw_executor 提交。
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            exe = p.chromium.executable_path
+            return bool(exe) and Path(exe).exists()
+    except Exception:
+        return False
+
+
 def check_environment() -> dict:
-    """轻量级环境检查"""
+    """轻量级环境检查（Windows/macOS/Linux 全平台）"""
     result = {"ready": False, "error": None, "fix_commands": []}
     try:
-        import playwright
+        import playwright  # noqa: F401
     except ImportError:
         result["error"] = "未安装 playwright 库"
         result["fix_commands"] = ["pip install playwright", "playwright install chromium"]
         return result
 
-    browsers_path = Path.home() / "Library" / "Caches" / "ms-playwright"
-    if not browsers_path.exists():
-        browsers_path = Path.home() / ".cache" / "ms-playwright"
-    if browsers_path.exists() and list(browsers_path.glob("chromium*")):
-        result["ready"] = True
-    else:
-        result["error"] = "Chromium 浏览器未安装"
-        result["fix_commands"] = ["playwright install chromium"]
+    # 快路径：按平台探测浏览器目录
+    for browsers_path in _playwright_browser_dirs():
+        try:
+            if browsers_path.exists() and list(browsers_path.glob("chromium*")):
+                result["ready"] = True
+                return result
+        except Exception:
+            continue
+
+    # 慢路径兜底：问 Playwright 自己（避免自定义安装位置造成误报）
+    try:
+        if _pw_executor.submit(_probe_chromium_executable).result(timeout=20):
+            result["ready"] = True
+            return result
+    except Exception:
+        pass
+
+    result["error"] = "Chromium 浏览器未安装"
+    result["fix_commands"] = ["playwright install chromium"]
     return result
 
 
@@ -451,11 +501,18 @@ def _verify_account_sync(account_name: str) -> dict:
         if expired:
             return {"name": account_name, "valid": False, "reason": f"cookie 已过期: {', '.join(expired[:3])}"}
 
-        # cookie 文件修改时间
+        # cookie 文件修改时间：只作提醒，不作硬拦截。
+        # cookie 未过期时按文件年龄拦截会造成「每次发布都提示重新登录」的误伤；
+        # 若 cookie 实际失效，发布导航时会被重定向到登录页，自然报错。
         mtime = state_file.stat().st_mtime
         age_days = (now - mtime) / 86400
         if age_days > 30:
-            return {"name": account_name, "valid": False, "reason": f"登录已超过 {int(age_days)} 天，建议重新登录"}
+            return {
+                "name": account_name,
+                "valid": True,
+                "reason": "",
+                "warning": f"登录已超过 {int(age_days)} 天，若发布失败请重新登录",
+            }
 
         return {"name": account_name, "valid": True, "reason": ""}
     except Exception as e:
@@ -700,41 +757,48 @@ async def sync_chapters(account_name: str, book_name: str, project_root: str) ->
 
 # ─────────── 章节发布 ───────────
 
-_PUBLISH_ERROR_KEYWORDS = ["上限", "限制", "频繁", "不能", "超过", "失败", "请稍后", "已达到"]
+# 成功提示优先判定；错误只认整句短语，避免把页面固有文案（"审核失败"筛选标签、
+# "字数不能少于…"说明、协议条款）里的单字词误判为发布失败。
+_PUBLISH_SUCCESS_HINTS = ["发布成功", "提交成功", "创建成功", "已提交", "审核中"]
+_PUBLISH_ERROR_PHRASES = [
+    "发布失败", "提交失败", "保存失败",
+    "操作过于频繁", "操作频繁", "请稍后再试", "请稍后重试",
+    "今日发布已达上限", "已达上限", "章节数已达",
+    "内容含有违规", "违规内容", "审核不通过", "字数不足",
+]
 
 
 def _check_publish_error(page) -> str:
-    """检查发布后页面是否有错误/限制提示，返回错误信息或空字符串"""
-    # 先检查常见的 toast/弹窗选择器
+    """检查发布后的 toast/弹窗提示，返回错误信息或空字符串。
+
+    只信任浮层内的整句提示，不做整页文本扫描——后台页面正常状态下就含有
+    "上限/不能/失败"等词，整页扫描会让每一章都被误报为发布失败。
+    """
     toast_selectors = [
         '.toast', '.message', '.alert', '.notice', '.tip',
         '[class*="toast"]', '[class*="message"]', '[class*="notice"]',
         '[class*="Toast"]', '[class*="Message"]', '[class*="modal"]',
         '[role="alert"]', '[role="dialog"]',
     ]
+    texts = []
     for sel in toast_selectors:
         try:
             els = page.locator(sel).all()
             for el in els:
                 if el.is_visible(timeout=300):
                     text = el.inner_text().strip()
-                    if text and any(kw in text for kw in _PUBLISH_ERROR_KEYWORDS):
-                        return text
+                    if text:
+                        texts.append(text)
         except Exception:
             continue
-    # 兜底：扫描整页文本
-    try:
-        body_text = page.locator('body').inner_text()
-        for kw in _PUBLISH_ERROR_KEYWORDS:
-            if kw in body_text:
-                # 尝试提取含关键词的那一行
-                for line in body_text.split('\n'):
-                    line = line.strip()
-                    if kw in line and len(line) < 100:
-                        return line
-                return f"检测到限制提示（含'{kw}'）"
-    except Exception:
-        pass
+
+    # 任何浮层出现成功提示 → 按成功处理
+    for text in texts:
+        if any(hint in text for hint in _PUBLISH_SUCCESS_HINTS):
+            return ""
+    for text in texts:
+        if any(phrase in text for phrase in _PUBLISH_ERROR_PHRASES):
+            return text[:120]
     return ""
 
 

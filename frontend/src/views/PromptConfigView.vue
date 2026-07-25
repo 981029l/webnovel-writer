@@ -172,6 +172,37 @@ async function resetAll() {
   }
 }
 
+// 3d. 推送当前槽位内容到全局子风格包（影响新项目与「恢复默认」）
+const showPushDialog = ref(false)
+const pushing = ref(false)
+const pushTarget = ref(null)
+
+function requestPush(item) {
+  if (isDirty(item.id)) {
+    showMessage('该模板有未保存改动，请先保存再推送')
+    return
+  }
+  pushTarget.value = item
+  showPushDialog.value = true
+}
+
+async function confirmPush() {
+  if (!pushTarget.value) return
+  pushing.value = true
+  try {
+    const { data } = await projectsApi.pushPromptGlobal(pushTarget.value.id)
+    if (data.config) applyPromptConfig(data.config)
+    showMessage('✓ 已推送到全局子风格包（原文件已备份）')
+  } catch (e) {
+    const detail = e?.response?.data?.detail
+    showMessage(detail ? `✗ 推送失败：${detail}` : '✗ 推送失败')
+  } finally {
+    pushing.value = false
+    showPushDialog.value = false
+    pushTarget.value = null
+  }
+}
+
 // 3c. 离开页面警告
 function onBeforeUnload(e) {
   if (dirtyPromptIds.value.length) {
@@ -322,9 +353,19 @@ onBeforeUnmount(() => {
 
               <div class="prompt-foot">
                 <span class="char-count">{{ (draftMap[item.id] || '').length }} 字符</span>
-                <button class="btn tiny" @click="resetSlot(item.id)" :disabled="resetting">
-                  恢复此模板
-                </button>
+                <div class="foot-actions">
+                  <button
+                    class="btn tiny"
+                    @click="requestPush(item)"
+                    :disabled="pushing || isDirty(item.id)"
+                    :title="isDirty(item.id) ? '有未保存改动，请先保存' : '把当前内容设为该子风格的全局默认模板'"
+                  >
+                    保存到全局子风格包
+                  </button>
+                  <button class="btn tiny" @click="resetSlot(item.id)" :disabled="resetting">
+                    恢复此模板
+                  </button>
+                </div>
               </div>
               </template>
             </article>
@@ -354,6 +395,28 @@ onBeforeUnmount(() => {
       </ul>
       <p v-if="hasMissingVarsInDirty" style="margin: 0.75rem 0 0; color: var(--warning-strong); font-size: 0.88rem;">
         部分模板存在缺失变量，运行时对应位置将不会被替换，可能导致输出异常。
+      </p>
+    </ConfirmDialog>
+
+    <!-- 推送到全局包确认弹窗 -->
+    <ConfirmDialog
+      :is-open="showPushDialog"
+      title="推送到全局子风格包"
+      confirm-text="确认推送"
+      type="warning"
+      :loading="pushing"
+      @confirm="confirmPush"
+      @cancel="showPushDialog = false"
+    >
+      <p style="margin: 0 0 0.5rem;">
+        将把 <strong>{{ pushTarget?.name }}</strong> 的当前内容写入全局子风格包
+        （{{ promptConfig.genre }} / {{ promptConfig.substyle || '默认' }}）：
+      </p>
+      <p style="margin: 0 0 0.75rem;">
+        <code style="word-break: break-all; font-size: 0.8rem;">{{ pushTarget?.source_path || '按当前题材推导' }}</code>
+      </p>
+      <p style="margin: 0; font-size: 0.88rem; color: var(--ink-secondary);">
+        只影响之后新建的项目与「恢复默认/题材切换」，不会改动其他现有项目的快照；原全局文件会自动备份为 .bak。
       </p>
     </ConfirmDialog>
 
@@ -755,6 +818,11 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 1rem;
   margin-top: 0.85rem;
+}
+
+.foot-actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .char-count {

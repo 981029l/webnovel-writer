@@ -1,4 +1,5 @@
  
+# Copyright (c) 2025 左岚. All rights reserved.
 """大纲管理 API"""
 
 import re
@@ -25,6 +26,11 @@ class OutlineItem(BaseModel):
 class OutlineUpdate(BaseModel):
     """大纲更新请求"""
     content: str
+
+
+class CheckContinuityRequest(BaseModel):
+    """连续性校验请求参数"""  # 校验请求体
+    content: str  # 大纲文本内容
 
 
 # get_project_root imported from dependencies
@@ -59,14 +65,18 @@ async def get_outlines(root: Path = Depends(get_project_root)):
     for volume in sorted(seen_volumes):
         f = seen_volumes[volume]
         content = f.read_text(encoding="utf-8")
+        chaps = parse_outline_chapters(content)  # 解析本卷章节
+        continuity = check_chapter_continuity(chaps)  # 校验连续性
         outlines.append({
             "id": f"volume_{volume}",
             "volume": volume,
             "title": f.stem,
-            "content": content
+            "content": content,
+            "continuity": continuity  # 连续性检查信息
         })
     
     return {"outlines": outlines, "total_outline": total_outline}
+
 
 
 def parse_outline_chapters(content: str) -> List[dict]:
@@ -140,6 +150,30 @@ def parse_outline_chapters(content: str) -> List[dict]:
     # 按章节号排序
     chapters.sort(key=lambda x: x["chapter"])
     return chapters
+
+
+def check_chapter_continuity(chapters: List[dict]) -> dict:
+    """校验大纲章节连续性，识别跳号断层"""  # 校验大纲章节连续性
+    if not chapters:
+        return {"is_continuous": True, "discontinuities": []}
+    sorted_chaps = sorted(chapters, key=lambda c: c.get("chapter", 0))  # 按章节编号升序排列
+    discontinuities = []  # 记录跳号区间
+    for i in range(len(sorted_chaps) - 1):
+        curr_num = sorted_chaps[i].get("chapter", 0)  # 当前章号
+        next_num = sorted_chaps[i + 1].get("chapter", 0)  # 下一章号
+        if next_num > curr_num + 1:  # 检测到跳号断层
+            missing_start = curr_num + 1  # 缺失起始章号
+            missing_end = next_num - 1  # 缺失结束章号
+            discontinuities.append({
+                "prev_chapter": curr_num,  # 断层前章号
+                "next_chapter": next_num,  # 断层后章号
+                "missing_range": f"{missing_start}-{missing_end}" if missing_start != missing_end else str(missing_start)  # 缺失区间文本
+            })
+    return {
+        "is_continuous": len(discontinuities) == 0,  # 是否完整连续
+        "discontinuities": discontinuities  # 断层列表
+    }
+
 
 
 @router.get("/tree")
@@ -407,3 +441,16 @@ async def delete_volume_outline(
         "deleted_entity_files": deleted_entity_files,
         "roster_updated": roster_updated
     }
+
+
+@router.post("/check-continuity")
+async def check_outline_continuity(req: CheckContinuityRequest):
+    """检测指定大纲文本的连续性与跳号断层"""  # 检测大纲连续性
+    chaps = parse_outline_chapters(req.content)  # 解析章节列表
+    continuity = check_chapter_continuity(chaps)  # 校验章节连续性
+    return {
+        "total_chapters": len(chaps),  # 解析出的总章数
+        "chapters": chaps,  # 章节详情列表
+        "continuity": continuity  # 连续性分析报告
+    }
+

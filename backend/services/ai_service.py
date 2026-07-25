@@ -203,13 +203,11 @@ class AIService:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
             
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": True
-        }
+        # 本次流式调用的结束原因（"stop"=自然结束，"length"=被 max_tokens 截断）。
+        # 调用方在流结束后读取，用于识别截断并自动续写。
+        self.last_finish_reason = None
+        # 断线续传：流中途断开时，把已收到内容作 assistant 上下文回传续写（最多 2 轮），
+        # 避免「已输出一半 → 整段重发重复 / 直接报错丢内容」。
 
         self._debug(f"Applying AI Stream Request: {url} (Model: {self.model})")
         # 调试：打印请求消息的长度和摘要
@@ -221,7 +219,17 @@ class AIService:
             pass
         
         max_retries = 3
+        resume_rounds = 0
+        current_messages = messages
+        accumulated = ""
         for attempt in range(max_retries):
+            payload = {
+                "model": self.model,
+                "messages": current_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": True
+            }
             try:
                 connector = aiohttp.TCPConnector(force_close=True, enable_cleanup_closed=True)
                 timeout = aiohttp.ClientTimeout(total=self.timeout, connect=30, sock_read=300)
@@ -233,7 +241,12 @@ class AIService:
                         
                         if response.status != 200:
                             error_text = await response.text()
-                            print(f"AI Stream Error: {error_text[:200]}")
+                            print(f"AI Stream Error (attempt {attempt + 1}/{max_retries}): {response.status} {error_text[:200]}")
+                            # 429/5xx 属于服务商临时性错误，退避后重试；4xx 配置类错误直接报出
+                            if response.status in (429, 500, 502, 503, 504) and attempt < max_retries - 1:
+                                import asyncio
+                                await asyncio.sleep(3 + attempt * 3)
+                                continue
                             yield f"[ERROR] AI API returned {response.status}: {error_text[:100]}"
                             return
 
@@ -246,8 +259,10 @@ class AIService:
                             try:
                                 data = json.loads(raw_text)
                                 if "choices" in data and len(data["choices"]) > 0:
+                                    self.last_finish_reason = data["choices"][0].get("finish_reason") or self.last_finish_reason
                                     content = data["choices"][0].get("message", {}).get("content", "")
                                     if content:
+                                        accumulated += content
                                         yield content
                                         self._debug(f"AI JSON response length: {len(content)}")
                                         return
@@ -282,11 +297,15 @@ class AIService:
                                     try:
                                         data = json.loads(line[6:])
                                         if "choices" in data and len(data["choices"]) > 0:
+                                            fr = data["choices"][0].get("finish_reason")
+                                            if fr:
+                                                self.last_finish_reason = fr
                                             delta = data["choices"][0].get("delta", {})
                                             if "content" in delta:
                                                 chunk_count += 1
                                                 if chunk_count == 1:
                                                     self._debug("First SSE chunk received!")
+                                                accumulated += delta["content"]
                                                 yield delta["content"]
                                     except json.JSONDecodeError:
                                         continue
@@ -308,11 +327,15 @@ class AIService:
                                     try:
                                         data = json.loads(line[6:])
                                         if "choices" in data and len(data["choices"]) > 0:
+                                            fr = data["choices"][0].get("finish_reason")
+                                            if fr:
+                                                self.last_finish_reason = fr
                                             delta = data["choices"][0].get("delta", {})
                                             if "content" in delta:
                                                 chunk_count += 1
                                                 if chunk_count == 1:
                                                     self._debug("First SSE chunk received (tail flush)!")
+                                                accumulated += delta["content"]
                                                 yield delta["content"]
                                     except json.JSONDecodeError:
                                         continue
@@ -324,8 +347,19 @@ class AIService:
                 if attempt < max_retries - 1:
                     import asyncio
                     await asyncio.sleep(3 + attempt * 2)
+                    if accumulated and resume_rounds < 2:
+                        # 断点续传：已输出部分内容时，带上下文续写而不是整段重发
+                        resume_rounds += 1
+                        self._debug(f"Stream dropped mid-response, resuming (round {resume_rounds}), got {len(accumulated)} chars")
+                        current_messages = list(messages) + [
+                            {"role": "assistant", "content": accumulated},
+                            {"role": "user", "content": (
+                                "你的上一条回复因网络中断被截断。请从中断处无缝继续输出剩余内容"
+                                "（若最后一句不完整先补完该句），禁止重复已输出内容，禁止任何前言或解释。"
+                            )},
+                        ]
                     continue
-                yield f"[ERROR] {str(e)}"
+                yield f"[ERROR] 连接中断且重试失败: {str(e)}"
 
 
 
@@ -359,29 +393,6 @@ class AIService:
         except Exception as e:
             print(f"Error fetching models from {url}: {e}")
             return [self.model, "Qwen/Qwen2.5-7B-Instruct", "ZhipuAI/GLM-5", "grok-2-latest", "gemini-2.5-flash", "gpt-3.5-turbo", "gpt-4"]
-
-    async def generate_outline(self, genre: str, premise: str, volumes: int = 1) -> str:
-        """生成大纲"""
-        system_prompt = """你是一位专业的网文大纲策划师。请根据用户提供的题材和设定，生成详细的小说大纲。
-
-大纲格式要求：
-1. 使用 Markdown 格式
-2. 包含故事概要、主要角色、卷纲规划
-3. 每卷包含 20-30 章的详细规划
-4. 每章包含：标题、目标、爽点设计、Strand类型(Quest/Fire/Constellation)"""
-
-        user_prompt = f"""题材：{genre}
-核心设定：{premise}
-规划卷数：{volumes} 卷
-
-请生成完整的小说大纲。"""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-
-        return await self.chat(messages, temperature=0.8, max_tokens=8000)
 
     async def write_chapter(
         self,

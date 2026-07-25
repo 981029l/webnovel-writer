@@ -17,6 +17,7 @@ from services.project_prompt_store import (
     reset_project_prompts,
     ensure_project_prompts,
     sync_project_prompts_for_profile_change,
+    push_project_prompt_to_global,
 )
 from dependencies import get_project_root
 
@@ -324,6 +325,53 @@ async def reset_prompt_config(
     return get_project_prompt_config(root, genre, substyle)
 
 
+class ProjectPromptPushRequest(BaseModel):
+    """推送单个槽位模板到全局子风格包"""
+    slot_id: str
+
+
+@router.post("/prompt-config/push-global")
+async def push_prompt_config_to_global(
+    payload: ProjectPromptPushRequest,
+    root: Path = Depends(get_project_root),
+):
+    """把当前项目的槽位模板回写到全局子风格包。
+
+    只影响新项目与「恢复默认/题材切换」，不主动改动其他现有项目的快照。
+    目标路径由服务端从槽位与项目题材推导，客户端不传路径。
+    """
+    state_file = root / ".webnovel" / "state.json"
+    genre = "玄幻"
+    substyle = ""
+
+    if state_file.exists():
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            info = state.get("project_info", {})
+            if info:
+                genre = info.get("genre") or state.get("genre") or genre
+                substyle = info.get("substyle") or state.get("substyle") or ""
+            else:
+                genre = state.get("genre") or genre
+                substyle = state.get("substyle") or ""
+        except Exception:
+            pass
+
+    try:
+        result = push_project_prompt_to_global(root, payload.slot_id, genre, substyle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "success": True,
+        "slot_id": result["slot_id"],
+        "target_path": result["target_path"],
+        "backup_path": result["backup_path"],
+        "config": get_project_prompt_config(root, genre, substyle),
+    }
+
+
 class ProjectInfoUpdate(BaseModel):
     title: Optional[str] = None
     genre: Optional[str] = None
@@ -401,11 +449,13 @@ async def update_info(info: ProjectInfoUpdate, root: Path = Depends(get_project_
 
         preserved_custom_prompt_slots: List[str] = []
         if changed_fields:
+            # 全部槽位内容都来自题材/子风格独立包（含大纲、提取、连摘模板），
+            # 题材或子风格变更后必须全量同步；已自定义的槽位由
+            # sync_project_prompts_for_profile_change 自动保留。
             sync_result = sync_project_prompts_for_profile_change(
                 root,
                 normalized_genre,
                 normalized_substyle,
-                slot_ids=["genre_writer", "substyle_writer"],
             )
             preserved_custom_prompt_slots = sync_result.get("preserved_customized_slots", [])
             if should_invalidate_outline:

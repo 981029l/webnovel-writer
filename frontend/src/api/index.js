@@ -22,6 +22,7 @@ export const projectsApi = {
     updateConfig: (config) => api.put('/projects/config', config),
     updatePromptConfig: (payload) => api.put('/projects/prompt-config', payload),
     resetPromptConfig: (payload = {}) => api.post('/projects/prompt-config/reset', payload),
+    pushPromptGlobal: (slotId) => api.post('/projects/prompt-config/push-global', { slot_id: slotId }),
     init: (data) => api.post('/projects/init', data),
     getGenres: () => api.get('/projects/genres'),
     reset: () => api.delete('/projects/reset'),

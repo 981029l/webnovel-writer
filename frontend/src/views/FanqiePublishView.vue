@@ -2,6 +2,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { fanqieApi } from '../api'
+import {
+  BookOpen, CheckCircle2, CircleStop, CircleX, ExternalLink, LogIn,
+  MonitorX, RefreshCw, Trash2, TriangleAlert, UploadCloud, UserPlus
+} from 'lucide-vue-next'
 
 // ─── 环境状态 ───
 const envReady = ref(true)
@@ -357,19 +361,25 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
             <h1 class="page-title">番茄自动上传</h1>
             <p class="page-subtitle">一键将章节发布到番茄小说平台</p>
           </div>
-          <button class="btn btn-outline btn-sm btn-danger" @click="closeAllBrowsers">关闭所有浏览器</button>
+          <button class="btn btn-outline btn-sm btn-danger" @click="closeAllBrowsers">
+            <MonitorX :size="14" :stroke-width="1.75" />关闭所有浏览器
+          </button>
         </div>
       </header>
 
       <!-- 环境警告 -->
       <section v-if="!envReady" class="card env-warning">
         <div class="env-warning-content">
-          <h3 class="env-warning-title">运行环境未就绪</h3>
+          <h3 class="env-warning-title">
+            <TriangleAlert :size="16" :stroke-width="1.75" />运行环境未就绪
+          </h3>
           <p class="env-warning-msg">{{ envError }}</p>
           <div class="env-commands">
             <code v-for="cmd in envFixCommands" :key="cmd" class="env-cmd">{{ cmd }}</code>
           </div>
-          <button class="btn btn-outline btn-sm" @click="fetchStatus">重新检测</button>
+          <button class="btn btn-outline btn-sm" @click="fetchStatus">
+            <RefreshCw :size="14" :stroke-width="1.75" />重新检测
+          </button>
         </div>
       </section>
 
@@ -379,10 +389,10 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
           <h2 class="card-title">番茄账号</h2>
           <div class="header-actions">
             <button class="btn btn-outline btn-sm" @click="verifyAllAccounts" :disabled="verifying || loginLoading">
-              {{ verifying ? '验证中...' : '检查登录状态' }}
+              <RefreshCw :size="14" :stroke-width="1.75" />{{ verifying ? '验证中...' : '检查登录状态' }}
             </button>
-            <button class="btn btn-primary btn-sm" @click="startAddAccount" :disabled="loginLoading || loginBrowserOpen">
-              添加账号
+            <button v-if="accounts.length > 0" class="btn btn-outline btn-sm" @click="startAddAccount" :disabled="loginLoading || loginBrowserOpen">
+              <UserPlus :size="14" :stroke-width="1.75" />添加账号
             </button>
           </div>
         </div>
@@ -398,23 +408,34 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
               <span v-else class="status-badge status-unknown">未验证</span>
             </div>
             <div class="account-actions">
-              <button v-if="getAccountStatus(acc.name) === 'expired'" class="btn btn-primary btn-sm" @click="startLogin(acc.name)">重新登录</button>
-              <button class="btn btn-primary btn-sm" @click="loadAccountBooks(acc.name)" :disabled="booksLoading">
-                {{ booksLoading && selectedAccount === acc.name ? '加载中...' : '加载书单' }}
+              <button v-if="getAccountStatus(acc.name) === 'expired'" class="btn btn-outline btn-sm" @click="startLogin(acc.name)">
+                <LogIn :size="14" :stroke-width="1.75" />重新登录
               </button>
-              <a class="btn btn-outline btn-sm" href="https://fanqienovel.com/main/writer/book-manage" target="_blank" rel="noopener">后台</a>
-              <button class="btn btn-outline btn-sm btn-danger" @click="doLogout(acc.name)">删除</button>
+              <button class="btn btn-outline btn-sm" @click="loadAccountBooks(acc.name)" :disabled="booksLoading">
+                <BookOpen :size="14" :stroke-width="1.75" />{{ booksLoading && selectedAccount === acc.name ? '加载中...' : '加载书单' }}
+              </button>
+              <a class="btn btn-outline btn-sm" href="https://fanqienovel.com/main/writer/book-manage" target="_blank" rel="noopener">
+                <ExternalLink :size="14" :stroke-width="1.75" />后台
+              </a>
+              <button class="btn btn-outline btn-sm btn-danger" @click="doLogout(acc.name)">
+                <Trash2 :size="14" :stroke-width="1.75" />删除
+              </button>
             </div>
           </div>
         </div>
         <div v-else-if="!showAddAccount && !loginLoading && !loginBrowserOpen" class="empty-hint">
-          暂无账号，请点击"添加账号"登录番茄小说
+          <p>暂无账号，登录番茄小说后即可上传章节</p>
+          <button class="btn btn-primary btn-sm" @click="startAddAccount">
+            <UserPlus :size="14" :stroke-width="1.75" />添加账号
+          </button>
         </div>
 
         <!-- 添加账号输入 -->
         <div v-if="showAddAccount && !loginLoading && !loginBrowserOpen" class="add-account-form">
           <input v-model="newAccountName" class="config-input" placeholder="输入账号名称（如：主号、小号）" @keyup.enter="confirmAddAccount" />
-          <button class="btn btn-primary btn-sm" @click="confirmAddAccount" :disabled="!newAccountName.trim()">开始登录</button>
+          <button class="btn btn-outline btn-sm" @click="confirmAddAccount" :disabled="!newAccountName.trim()">
+            <LogIn :size="14" :stroke-width="1.75" />开始登录
+          </button>
           <button class="btn btn-outline btn-sm" @click="showAddAccount = false">取消</button>
         </div>
 
@@ -428,14 +449,16 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
             <p class="qr-hint">{{ loginMessage }}</p>
           </div>
           <div v-else-if="loginLoading" class="login-loading">
-            <div class="spinner"></div>
+            <div class="spinner spinner-sm"></div>
             <p>{{ loginMessage }}</p>
           </div>
 
           <!-- 登录成功后的关闭按钮 -->
           <div v-if="loginBrowserOpen && !loginLoading" class="browser-control">
             <p class="success-text">{{ loginMessage }}</p>
-            <button class="btn btn-primary" @click="closeLoginBrowser">关闭浏览器</button>
+            <button class="btn btn-outline" @click="closeLoginBrowser">
+              <MonitorX :size="14" :stroke-width="1.75" />关闭浏览器
+            </button>
           </div>
         </div>
       </section>
@@ -488,15 +511,19 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
         <div class="card-header">
           <h2 class="card-title">章节管理</h2>
           <div class="header-actions">
-            <button class="btn btn-outline btn-sm" @click="fetchChapters" :disabled="chaptersLoading">刷新</button>
+            <button class="btn btn-outline btn-sm" @click="fetchChapters" :disabled="chaptersLoading">
+              <RefreshCw :size="14" :stroke-width="1.75" />刷新
+            </button>
             <button class="btn btn-outline btn-sm" @click="selectAllUnpublished">全选未发布</button>
             <button v-if="selectedIds.size > 0" class="btn btn-outline btn-sm" @click="clearSelection">取消选择</button>
           </div>
         </div>
 
         <div class="chapter-table-wrap">
-          <div v-if="chaptersLoading" class="loading-state"><div class="spinner"></div><p>加载中...</p></div>
-          <div v-else-if="!chapters.length" class="loading-state"><p>暂无章节</p></div>
+          <div v-if="chaptersLoading" class="table-skeleton">
+            <div v-for="n in 6" :key="n" class="skeleton sk-row"></div>
+          </div>
+          <div v-else-if="!chapters.length" class="loading-state"><p>暂无章节，先去「章节创作」写一章吧</p></div>
           <table v-else class="chapter-table">
             <thead><tr><th class="col-check"></th><th class="col-id">章节</th><th class="col-title">标题</th><th class="col-words">字数</th><th class="col-status">状态</th></tr></thead>
             <tbody>
@@ -518,8 +545,12 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
           <span v-if="selectedIds.size > 0">已选择 {{ selectedIds.size }} 个章节</span>
           <span v-else class="text-muted">请选择要上传的章节</span>
           <div class="publish-btns">
-            <button class="btn btn-outline btn-sm btn-danger" @click="stopAllTasks">停止所有任务</button>
-            <button class="btn btn-primary" :disabled="!canPublish" @click="startPublish">开始上传</button>
+            <button class="btn btn-outline btn-sm btn-danger" @click="stopAllTasks">
+              <CircleStop :size="14" :stroke-width="1.75" />停止所有任务
+            </button>
+            <button class="btn btn-primary" :disabled="!canPublish" @click="startPublish">
+              <UploadCloud :size="15" :stroke-width="1.75" />开始上传
+            </button>
           </div>
         </div>
 
@@ -533,7 +564,7 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
           </div>
           <div v-if="publishResults.length" class="results-log">
             <div v-for="(r,i) in publishResults" :key="i" class="result-item" :class="{ 'result-ok': r.success, 'result-fail': !r.success || r.type==='error' }">
-              <span class="result-icon">{{ r.success ? 'OK' : 'ERR' }}</span>
+              <component :is="r.success ? CheckCircle2 : CircleX" :size="14" :stroke-width="1.75" class="result-icon" />
               <span class="result-msg">{{ r.message }}</span>
             </div>
           </div>
@@ -557,7 +588,7 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 
 /* Env warning */
 .env-warning { border-color: transparent; background: var(--warning-tint); }
-.env-warning-title { font-weight: 600; margin-bottom: 0.375rem; color: var(--warning-strong); }
+.env-warning-title { display: flex; align-items: center; gap: 0.375rem; font-weight: 600; margin-bottom: 0.375rem; color: var(--warning-strong); }
 .env-warning-msg { color: var(--ink-secondary); font-size: 0.875rem; margin-bottom: 0.75rem; }
 .env-commands { display: flex; flex-direction: column; gap: 0.375rem; margin-bottom: 0.75rem; }
 .env-cmd { font-family: var(--font-mono); font-size: 0.8125rem; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.5rem 0.75rem; user-select: all; }
@@ -569,7 +600,7 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 .account-info { display: flex; align-items: center; gap: 0.75rem; }
 .account-actions { display: flex; gap: 0.5rem; }
 .account-name { font-weight: 600; font-size: 0.9375rem; color: var(--ink-primary); }
-.empty-hint { text-align: center; padding: 1.5rem; color: var(--ink-muted); font-size: 0.875rem; }
+.empty-hint { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; text-align: center; padding: 1.5rem; color: var(--ink-muted); font-size: 0.875rem; }
 
 .add-account-form { display: flex; gap: 0.5rem; margin-top: 0.75rem; align-items: center; }
 .login-error { margin-top: 0.75rem; padding: 0.625rem 1rem; background: var(--danger-tint); border-radius: var(--radius-md); color: var(--danger); font-size: 0.875rem; }
@@ -577,9 +608,9 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 /* Login / QR */
 .login-area { margin-top: 1rem; text-align: center; }
 .qr-area { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 1rem 0; }
-.qr-screenshot { max-width: 280px; max-height: 280px; border-radius: var(--radius-md); border: 2px solid var(--border); image-rendering: pixelated; }
+.qr-screenshot { max-width: 280px; max-height: 280px; border-radius: var(--radius-md); border: 1px solid var(--border); image-rendering: pixelated; }
 .qr-hint { color: var(--ink-secondary); font-size: 0.875rem; }
-.login-loading { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 2rem 0; color: var(--ink-muted); }
+.login-loading { display: flex; align-items: center; justify-content: center; gap: 0.625rem; padding: 1.25rem 0; color: var(--ink-muted); font-size: 0.875rem; }
 .browser-control { display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 1rem 0; }
 .success-text { color: var(--success); font-weight: 600; }
 
@@ -589,7 +620,7 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 .config-label { font-size: 0.8125rem; font-weight: 500; color: var(--ink-secondary); }
 .config-input-group { display: flex; gap: 0.5rem; }
 .config-input { flex: 1; padding: 0.55rem 0.85rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--ink-primary); font-size: 0.875rem; outline: none; transition: border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard); }
-.config-input:focus { border-color: var(--primary); background: var(--card); }
+.config-input:focus { border-color: var(--primary); background: var(--card); box-shadow: 0 0 0 3px var(--primary-tint); }
 .config-select { padding: 0.55rem 0.85rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--ink-primary); font-size: 0.875rem; }
 .book-chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .book-chip { padding: 0.375rem 0.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); color: var(--ink-secondary); font-size: 0.8125rem; cursor: pointer; transition: border-color var(--dur-fast) var(--ease-standard), color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard); }
@@ -655,7 +686,11 @@ function formatWordCount(c) { return c >= 10000 ? (c / 10000).toFixed(1) + '万'
 .result-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8125rem; padding: 0.375rem 0.5rem; border-radius: var(--radius-sm); }
 .result-ok { color: var(--success); background: var(--success-tint); }
 .result-fail { color: var(--danger); background: var(--danger-tint); }
-.result-icon { font-weight: 600; font-size: 0.6875rem; padding: 0.125rem 0.375rem; border-radius: var(--radius-sm); flex-shrink: 0; font-family: var(--font-mono); }
+.result-icon { flex-shrink: 0; }
+
+/* 章节表骨架屏 */
+.table-skeleton { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem; }
+.sk-row { height: 36px; border-radius: var(--radius-sm); }
 
 .spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
